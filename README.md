@@ -34,6 +34,9 @@
 - 📡 **状态监视**：可视化跟踪 Agent 的当前动作（如运行终端、代码检索、MCP 工具调用等）。
 - ⚡ **远程审批**：当 Agent 执行敏感的 Shell 命令行或写入关键代码时，手机上一键授权（Allow）或驳回（Reject）。
 
+### 🔌 兼容性
+- **Antigravity 2.0+ 完美支持**：本项目完全兼容最新搭载彩虹 “A” 图标的 **Antigravity 2.0+** 及历史版本。仅需确保 IDE 启动了 CDP 远程调试服务（默认调试端口为 `9223`，本代理的一键启动脚本会自动为您配置并拉起），即可实现瞬时侦测与安全连接。
+
 ### 🤝 鸣谢与参考
 本项目修改并衍生自开源项目 [Belal33/antigravity-mobile-proxy](https://github.com/Belal33/antigravity-mobile-proxy)，在此对原作者优秀的创意和开源贡献表示诚挚的感谢！
 
