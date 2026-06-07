@@ -1,4 +1,4 @@
-﻿# Contributing to Antigravity Touch
+# Contributing to Antigravity Touch
 
 Thanks for your interest in contributing! 馃帀 This project welcomes contributions of all kinds 鈥?bug reports, feature ideas, documentation improvements, and code.
 
@@ -14,7 +14,7 @@ Thanks for your interest in contributing! 馃帀 This project welcomes contribut
 
 ```bash
 # Clone the repo
-git clone https://github.com/Belal33/antigravity-touch.git
+git clone https://github.com/haoran1234s/Antigravity-Touch.git
 cd antigravity-touch
 
 # Install dependencies
@@ -39,7 +39,7 @@ The dev server runs at `http://localhost:5555`.
 
 ### Reporting Bugs
 
-1. Check if the issue already exists in [GitHub Issues](https://github.com/Belal33/antigravity-touch/issues)
+1. Check if the issue already exists in [GitHub Issues](https://github.com/haoran1234s/Antigravity-Touch/issues)
 2. If not, open a new issue using the **Bug Report** template
 3. Include as much detail as possible 鈥?OS, Node.js version, error messages, and steps to reproduce
 
@@ -103,4 +103,4 @@ antigravity-touch/
 
 ## Questions?
 
-Open a [Discussion](https://github.com/Belal33/antigravity-touch/discussions) or reach out in the issues. We're happy to help!
+Open a [Discussion](https://github.com/haoran1234s/Antigravity-Touch/discussions) or reach out in the issues. We're happy to help!

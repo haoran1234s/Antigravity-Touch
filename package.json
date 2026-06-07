@@ -27,15 +27,15 @@
   "engines": {
     "node": ">=18"
   },
-  "homepage": "https://github.com/Belal33/antigravity-touch#readme",
+  "homepage": "https://github.com/haoran1234s/Antigravity-Touch#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Belal33/antigravity-touch.git"
+    "url": "git+https://github.com/haoran1234s/Antigravity-Touch.git"
   },
   "bugs": {
-    "url": "https://github.com/Belal33/antigravity-touch/issues"
+    "url": "https://github.com/haoran1234s/Antigravity-Touch/issues"
   },
-  "author": "Belal",
+  "author": "haoran1234s",
   "license": "MIT",
   "bin": {
     "antigravity-touch": "bin/cli.js"

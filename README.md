@@ -2,20 +2,37 @@
 
 # 🚀 Antigravity Touch
 
-**Chat with the Antigravity AI Agent from your phone, tablet, or any browser**
+### 移动端控制 Antigravity，可实时同步 PC 端对话内容，可按项目查询历史对话，实时监听对话状态。
+**Chat with the Antigravity AI Agent from your phone, tablet, or any browser.**
 
-Control your [Antigravity IDE](https://github.com/anthropics/antigravity) remotely — ask questions, run commands, edit files, and approve actions — all from a beautiful mobile-friendly chat interface with a secure tunnel to your machine.
+[✨ 简介](#-简介) | [🤔 What Is This?](#-what-is-this) | [📦 Installation](#-installation) | [⚡ Quick Start](#-quick-start)
+
+---
 
 [![npm version](https://img.shields.io/npm/v/antigravity-touch?color=CB3837&logo=npm)](https://www.npmjs.com/package/antigravity-touch)
 [![npm downloads](https://img.shields.io/npm/dm/antigravity-touch?color=blue&logo=npm)](https://www.npmjs.com/package/antigravity-touch)
-[![CI](https://github.com/Belal33/antigravity-touch/actions/workflows/ci.yml/badge.svg)](https://github.com/Belal33/antigravity-touch/actions/workflows/ci.yml)
+[![CI](https://github.com/haoran1234s/Antigravity-Touch/actions/workflows/ci.yml/badge.svg)](https://github.com/haoran1234s/Antigravity-Touch/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-≥18-339933?logo=node.js)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/Belal33/antigravity-touch?style=social)](https://github.com/Belal33/antigravity-touch)
+[![GitHub stars](https://img.shields.io/github/stars/haoran1234s/Antigravity-Touch?style=social)](https://github.com/haoran1234s/Antigravity-Touch)
 
-<img src="https://raw.githubusercontent.com/Belal33/antigravity-touch/main/public/demo.gif" alt="Antigravity Touch Demo" width="300" />
+<img src="https://raw.githubusercontent.com/haoran1234s/Antigravity-Touch/main/public/demo.gif" alt="Antigravity Touch Demo" width="300" />
 
 </div>
+
+---
+
+## 📢 简介
+
+> [!TIP]
+> 📱 **Antigravity Touch** 是一款专门为 **Antigravity IDE** (AI-First 编程编辑器) 量身打造的远程控制器与 Web 客户端网关。
+> 它允许您在手机、平板或任何终端浏览器上远程操纵本地 PC 上的 AI 编程代理，极大地拓宽了“人在回路（Human-in-the-Loop）”的开发场景，让您可以随时随地审批、监督并指导您的 AI 协同编码！
+
+### 🎯 核心亮点
+- 🔄 **实时同步**：毫秒级同步 PC 端的 AI 对话内容、思考状态、文件修改与命令输出。
+- 📂 **历史检索**：支持按项目名称、会话时间智能筛选历史对话和生成的文件构件（Artifacts）。
+- 📡 **状态监视**：可视化跟踪 Agent 的当前动作（如运行终端、代码检索、MCP 工具调用等）。
+- ⚡ **远程审批**：当 Agent 执行敏感的 Shell 命令行或写入关键代码时，手机上一键授权（Allow）或驳回（Reject）。
 
 ---
 
