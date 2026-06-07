@@ -34,6 +34,9 @@
 - 📡 **状态监视**：可视化跟踪 Agent 的当前动作（如运行终端、代码检索、MCP 工具调用等）。
 - ⚡ **远程审批**：当 Agent 执行敏感的 Shell 命令行或写入关键代码时，手机上一键授权（Allow）或驳回（Reject）。
 
+### 🤝 鸣谢与参考
+本项目修改并衍生自开源项目 [Belal33/antigravity-mobile-proxy](https://github.com/Belal33/antigravity-mobile-proxy)，在此对原作者优秀的创意和开源贡献表示诚挚的感谢！
+
 ---
 
 ## 🤔 What Is This?
