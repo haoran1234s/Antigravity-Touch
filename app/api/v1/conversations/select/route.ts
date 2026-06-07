@@ -2,14 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ensureCdpConnection } from '@/lib/init';
 import ctx from '@/lib/context';
 import { switchIdeConversation } from '@/lib/actions/switch-conversation';
+import { getActiveIdeConversation } from '@/lib/scraper/ide-conversations';
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
+import {
+  brainConversationExists,
+  getBrainConversation,
+} from '@/lib/brain-conversations';
 
 export const dynamic = 'force-dynamic';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 function extractTitle(convDir: string): string | null {
   const taskFile = path.join(convDir, 'task.md');
@@ -47,52 +52,99 @@ function getMatchScore(s1: string, s2: string): number {
 
 /**
  * POST /api/v1/conversations/select — switch conversation in the IDE.
- * Accepts { title: string }
+ * Accepts { title: string, index?: number }
  */
 export async function POST(request: NextRequest) {
-  await ensureCdpConnection();
+  try {
+    await ensureCdpConnection();
+  } catch { /* local brain-history selection can still work without CDP */ }
 
   const body = await request.json();
-  const { title } = body;
-  if (!title) {
-    return NextResponse.json({ error: 'title is required' }, { status: 400 });
+  const { title, index, id, projectName, projectPath } = body;
+  const targetTitle = typeof title === 'string' ? title : '';
+  const targetId = typeof id === 'string' ? id : '';
+  const targetProjectName = typeof projectName === 'string' ? projectName : '';
+  const targetIndex = Number.isInteger(index) && index >= 0 ? index : undefined;
+  if (!targetTitle && targetIndex === undefined && !targetId) {
+    return NextResponse.json({ error: 'title, id or index is required' }, { status: 400 });
   }
 
   if (!ctx.workbenchPage) {
+    if (brainConversationExists(targetId)) {
+      const brainConversation = getBrainConversation(targetId);
+      ctx.activeConversationId = targetId;
+      ctx.activeTitle = brainConversation?.title || targetTitle || null;
+      ctx.activeConversationSource = 'brain';
+      return NextResponse.json({
+        success: true,
+        title: ctx.activeTitle,
+        activeConversationId: ctx.activeConversationId,
+        source: 'brain',
+      });
+    }
+
     return NextResponse.json(
-      { error: 'Not connected to Antigravity' },
+      { error: 'Not connected to Antigravity and local history was not found' },
       { status: 503 }
     );
   }
 
   try {
-    // 1. Switch the IDE UI
-    const success = await switchIdeConversation(ctx, title);
+    // 1. Switch the IDE UI. Brain-only history entries do not have a valid
+    // IDE row index; when switching fails but the brain id exists, fall back to
+    // local-history selection so mobile can still open project history.
+    const success = await switchIdeConversation(ctx, targetTitle, targetIndex, {
+      id: targetId,
+      projectName: targetProjectName,
+    });
+
+    if (!success && brainConversationExists(targetId)) {
+      const brainConversation = getBrainConversation(targetId);
+      ctx.activeConversationId = targetId;
+      ctx.activeTitle = brainConversation?.title || targetTitle || null;
+      ctx.activeConversationSource = 'brain';
+      return NextResponse.json({
+        success: true,
+        title: ctx.activeTitle,
+        activeConversationId: ctx.activeConversationId,
+        source: 'brain',
+      });
+    }
 
     // 2. Add memory cache of the selected title, in case we can't find the UUID
-    ctx.activeTitle = title;
+    const activeSnapshot = success ? await getActiveIdeConversation(ctx) : null;
+    ctx.activeTitle = activeSnapshot?.title || targetTitle || null;
     ctx.activeConversationId = null; // Reset it
+    ctx.activeConversationSource = null;
+    if (activeSnapshot?.id) {
+      ctx.activeConversationId = activeSnapshot.id;
+      ctx.activeConversationSource = 'ide';
+    } else if (brainConversationExists(targetId)) {
+      ctx.activeConversationId = targetId;
+      ctx.activeConversationSource = 'ide';
+    }
 
     // 3. Map the title back to a brain directory so the artifact panel works
-    if (fs.existsSync(BRAIN_DIR)) {
-        const entries = fs.readdirSync(BRAIN_DIR, { withFileTypes: true });
+    if (!ctx.activeConversationId && targetTitle && fs.existsSync(getBrainDir())) {
+        const entries = fs.readdirSync(getBrainDir(), { withFileTypes: true });
         
         let bestMatch: { id: string; score: number; mtime: number } | null = null;
 
         for (const entry of entries) {
             if (entry.isDirectory() && !entry.name.startsWith('.')) {
-                const dirPath = path.join(BRAIN_DIR, entry.name);
+                const dirPath = path.join(getBrainDir(), entry.name);
                 const convTitle = extractTitle(dirPath);
                 
                 if (convTitle) {
                     // Exact or substring match
-                    if (convTitle === title || convTitle.includes(title) || title.includes(convTitle)) {
+                    if (convTitle === targetTitle || convTitle.includes(targetTitle) || targetTitle.includes(convTitle)) {
                         ctx.activeConversationId = entry.name;
+                        ctx.activeConversationSource = 'ide';
                         break;
                     }
 
                     // Fuzzy match scoring
-                    const score = getMatchScore(convTitle, title);
+                    const score = getMatchScore(convTitle, targetTitle);
                     const mtime = fs.statSync(dirPath).mtimeMs;
                     if (score > 0 && (!bestMatch || score > bestMatch.score || (score === bestMatch.score && mtime > bestMatch.mtime))) {
                         bestMatch = { id: entry.name, score, mtime };
@@ -104,10 +156,20 @@ export async function POST(request: NextRequest) {
         // 4. Fallback to best fuzzy match if no exact match found
         if (!ctx.activeConversationId && bestMatch && bestMatch.score >= 0.2) {
             ctx.activeConversationId = bestMatch.id;
+            ctx.activeConversationSource = 'ide';
         }
     }
 
-    return NextResponse.json({ success, title, activeConversationId: ctx.activeConversationId });
+    if (!ctx.activeConversationSource) ctx.activeConversationSource = 'ide';
+
+    return NextResponse.json({
+      success,
+      title: ctx.activeTitle,
+      activeConversationId: ctx.activeConversationId,
+      source: ctx.activeConversationSource,
+      projectName: activeSnapshot?.projectName || targetProjectName || undefined,
+      projectPath: typeof projectPath === 'string' ? projectPath : undefined,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }

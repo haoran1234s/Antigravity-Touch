@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Chat history scraper.
  * Scrolls the Antigravity conversation view viewport-by-viewport,
  * waiting for content to load at each position, then extracts
@@ -26,20 +26,67 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
   }
 
   return await ctx.workbenchPage.evaluate(async () => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const sidePanel = document.querySelector('.antigravity-agent-side-panel');
+    const panel =
+      sidePanel ||
+      document.querySelector('#root') ||
+      document.querySelector('[data-vscode-theme-kind]') ||
+      document.body;
     if (!panel) return { isRunning: false, turnCount: 0, turns: [] };
 
-    const conversation =
-      panel.querySelector('#conversation') ||
-      document.querySelector('#conversation');
-    const scrollArea = conversation?.querySelector('.overflow-y-auto');
-    if (!scrollArea)
-      return { isRunning: false, turnCount: 0, turns: [] };
+    const findConversationSurface = (): { scrollArea: Element; msgList: Element } | null => {
+      const conversation =
+        panel.querySelector('#conversation') ||
+        document.querySelector('#conversation');
+      const legacyScrollArea = conversation?.querySelector('.overflow-y-auto');
+      if (legacyScrollArea) {
+        return {
+          scrollArea: legacyScrollArea,
+          msgList: (legacyScrollArea as Element).querySelector('.mx-auto') || legacyScrollArea,
+        };
+      }
 
-    const msgList =
-      (scrollArea as Element).querySelector('.mx-auto') || scrollArea;
+      // Antigravity 2.x full-page layout has no `#conversation`; the message
+      // list is a `.mx-auto.w-full` inside the main scroll container.
+      const candidates = Array.from(
+        document.querySelectorAll('.mx-auto.w-full, .mx-auto[class*="w-full"]')
+      );
+      const scored = candidates
+        .map((el) => {
+          const responseCount = el.querySelectorAll('.leading-relaxed.select-text').length;
+          const userCount = el.querySelectorAll('[class*="group/user-input-step"]').length;
+          const textLen = ((el as HTMLElement).innerText || el.textContent || '').trim().length;
+          return { el, score: responseCount * 1000 + userCount * 600 + Math.min(textLen, 500) };
+        })
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score);
+      const msgList = scored[0]?.el;
+      if (!msgList) return null;
 
-    // ── Helper: wait for skeleton blocks in current viewport to resolve ──
+      let scrollArea: Element | null = msgList.parentElement;
+      while (scrollArea && scrollArea !== document.body) {
+        const style = getComputedStyle(scrollArea);
+        if (
+          /(auto|scroll)/.test(style.overflowY) &&
+          (scrollArea as HTMLElement).scrollHeight > (scrollArea as HTMLElement).clientHeight
+        ) {
+          break;
+        }
+        scrollArea = scrollArea.parentElement;
+      }
+
+      return {
+        scrollArea: scrollArea || document.scrollingElement || document.documentElement,
+        msgList,
+      };
+    };
+
+    const surface = findConversationSurface();
+    if (!surface) return { isRunning: false, turnCount: 0, turns: [] };
+
+    const { scrollArea, msgList } = surface;
+
+    // 鈹€鈹€ Helper: wait for skeleton blocks in current viewport to resolve 鈹€鈹€
     async function waitForLoad(maxWait = 3000) {
       const start = Date.now();
       while (Date.now() - start < maxWait) {
@@ -64,14 +111,14 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
       }
     }
 
-    // ── Helper: extract clean text from an element (strips <style>) ──
+    // 鈹€鈹€ Helper: extract clean text from an element (strips <style>) 鈹€鈹€
     function getCleanText(el: Element): string {
       const clone = el.cloneNode(true) as Element;
       clone.querySelectorAll('style, script').forEach((n) => n.remove());
       return (clone as HTMLElement).textContent?.trim() || '';
     }
 
-    // ── Helper: extract clean HTML from an element ──
+    // 鈹€鈹€ Helper: extract clean HTML from an element 鈹€鈹€
     function getCleanHTML(el: Element): string {
       const clone = el.cloneNode(true) as Element;
       clone.querySelectorAll('style, script').forEach((n) => n.remove());
@@ -102,7 +149,7 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
       return (clone as HTMLElement).innerHTML?.trim() || '';
     }
 
-    // ── Helper: check if element is visually hidden ──
+    // 鈹€鈹€ Helper: check if element is visually hidden 鈹€鈹€
     function isHidden(el: Element, root: Element): boolean {
       let ancestor = el.parentElement;
       let depth = 0;
@@ -129,22 +176,33 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
       return false;
     }
 
-    // ── Viewport-by-viewport extraction ──
+    // 鈹€鈹€ Viewport-by-viewport extraction 鈹€鈹€
     // Items are tagged with their absolute Y position at collection time
     // so we can sort chronologically even after elements get re-virtualized.
     const seen = new Set<string>();
     const candidates: {
-      absY: number;   // scrollTop + element offset — for chronological sorting
+      absY: number;   // scrollTop + element offset 鈥?for chronological sorting
       role: 'user' | 'agent';
       content: string;
       contentType?: string;
     }[] = [];
 
+
+    let historyElementCounter = (window as any).__proxyHistoryElementCounter || 0;
+    function getElementKey(role: 'user' | 'agent', el: Element, text: string, absY: number) {
+      const htmlEl = el as HTMLElement;
+      if (!htmlEl.dataset.proxyHistoryId) {
+        htmlEl.dataset.proxyHistoryId = String(historyElementCounter++);
+        (window as any).__proxyHistoryElementCounter = historyElementCounter;
+      }
+      return `${role}:el:${htmlEl.dataset.proxyHistoryId}:${text.substring(0, 300)}`;
+    }
+
     function collectAtCurrentPosition() {
       const panelRect = scrollArea!.getBoundingClientRect();
       const currentScroll = scrollArea!.scrollTop;
 
-      // ── Collect user messages ──
+      // 鈹€鈹€ Collect user messages 鈹€鈹€
       for (const el of Array.from(msgList.querySelectorAll('.whitespace-pre-wrap'))) {
         const text = el.textContent?.trim();
         if (!text || text.length < 2) continue;
@@ -178,16 +236,16 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
         )
           continue;
 
-        const key = 'user:' + text.substring(0, 300);
+        // Absolute Y position = scroll offset + element's position relative to scroll container
+        const absY = currentScroll + relTop;
+        const key = getElementKey('user', el, text, absY);
         if (seen.has(key)) continue;
         seen.add(key);
 
-        // Absolute Y position = scroll offset + element's position relative to scroll container
-        const absY = currentScroll + relTop;
         candidates.push({ absY, role: 'user', content: text });
       }
 
-      // ── Collect agent response blocks ──
+      // 鈹€鈹€ Collect agent response blocks 鈹€鈹€
       for (const el of Array.from(msgList.querySelectorAll(
         '.leading-relaxed.select-text'
       ))) {
@@ -210,10 +268,6 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
         const cleanText = getCleanText(el);
         if (!cleanText) continue;
 
-        const key = 'agent:' + cleanText.substring(0, 300);
-        if (seen.has(key)) continue;
-        seen.add(key);
-
         // Categorize the response
         const inNotify = !!el.closest('.notify-user-container');
         const parentClass =
@@ -228,6 +282,9 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
 
         const contentType = inNotify ? 'notify' : 'response';
         const absY = currentScroll + relTop;
+        const key = getElementKey('agent', el, cleanText, absY);
+        if (seen.has(key)) continue;
+        seen.add(key);
 
         candidates.push({
           absY,
@@ -238,7 +295,7 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
       }
     }
 
-    // ── Scroll through entire conversation, collecting at each stop ──
+    // 鈹€鈹€ Scroll through entire conversation, collecting at each stop 鈹€鈹€
     const overallStart = Date.now();
     const OVERALL_TIMEOUT = 30000; // 30s max for the entire scroll
 
@@ -269,10 +326,10 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
     await new Promise((r) => setTimeout(r, 200));
     collectAtCurrentPosition();
 
-    // ── Sort by absolute Y position (chronological order) ──
+    // 鈹€鈹€ Sort by absolute Y position (chronological order) 鈹€鈹€
     candidates.sort((a, b) => a.absY - b.absY);
 
-    // ── Build final turn list ──
+    // 鈹€鈹€ Build final turn list 鈹€鈹€
     const turns: { role: 'user' | 'agent'; content: string }[] = [];
     for (const c of candidates) {
       turns.push({ role: c.role, content: c.content });
@@ -288,3 +345,4 @@ export async function getChatHistory(ctx: ProxyContext): Promise<ChatHistory> {
     };
   });
 }
+

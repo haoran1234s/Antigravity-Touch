@@ -1,11 +1,11 @@
 import { NextResponse, NextRequest } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 const MIME_TYPES: Record<string, string> = {
   '.md': 'text/markdown; charset=utf-8',
@@ -45,7 +45,7 @@ function toHumanReadableName(filename: string): string {
  */
 function findFileInBrain(convId: string, fileName: string): string | null {
   try {
-    if (!fs.existsSync(BRAIN_DIR)) return null;
+    if (!fs.existsSync(getBrainDir())) return null;
 
     const searchDir = (dirPath: string): string | null => {
       if (!fs.existsSync(dirPath)) return null;
@@ -68,20 +68,20 @@ function findFileInBrain(convId: string, fileName: string): string | null {
     };
 
     const sanitizedConv = convId.replace(/[^a-zA-Z0-9\-_]/g, '');
-    const preferred = path.join(BRAIN_DIR, sanitizedConv);
+    const preferred = path.join(getBrainDir(), sanitizedConv);
     const match = searchDir(preferred);
     if (match) return match;
 
-    const dirs = fs.readdirSync(BRAIN_DIR, { withFileTypes: true })
+    const dirs = fs.readdirSync(getBrainDir(), { withFileTypes: true })
       .filter(e => e.isDirectory() && !e.name.startsWith('.'))
       .map(e => ({
         name: e.name,
-        mtime: fs.statSync(path.join(BRAIN_DIR, e.name)).mtimeMs,
+        mtime: fs.statSync(path.join(getBrainDir(), e.name)).mtimeMs,
       }))
       .sort((a, b) => b.mtime - a.mtime);
 
     for (const dir of dirs) {
-      const match = searchDir(path.join(BRAIN_DIR, dir.name));
+      const match = searchDir(path.join(getBrainDir(), dir.name));
       if (match) return match;
     }
 
@@ -110,7 +110,7 @@ export async function GET(
   }
 
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(BRAIN_DIR))) {
+  if (!resolved.startsWith(path.resolve(getBrainDir()))) {
     return NextResponse.json({ error: 'Access denied' }, { status: 403 });
   }
 

@@ -18,10 +18,10 @@ export default function ChatContainer() {
   // Destructure all values used in JSX to avoid "Cannot access refs during render" lint errors.
   // The useChat hook mixes ref-backed and state-backed values in its return object.
   const {
-    statusState, statusText, windows, conversations, activeConversation,
+    statusState, statusText, windows, conversations, conversationProjects, activeConversation,
     cdpStatus, recentProjects, selectWindow, selectConversation,
     startNewChat, startCdpServer, openNewWindow, closeWindowByIndex,
-    networkOnline, isConnected, isLoadingHistory, showWelcome,
+    networkOnline, isConnected, isMonitorConnected, isLoadingHistory, showWelcome,
     messages, currentSteps, currentResponse, isStreaming,
     sendMessage, stopStreaming, currentMode, toggleMode,
     currentAgent, agents, isLoadingAgents, fetchAgentList, switchAgent,
@@ -58,7 +58,9 @@ export default function ChatContainer() {
         statusText={statusText}
         windows={windows}
         conversations={conversations}
+        conversationProjects={conversationProjects}
         activeConversation={activeConversation}
+        isMonitorConnected={isMonitorConnected}
         cdpStatus={cdpStatus}
         recentProjects={recentProjects}
         onSelectWindow={selectWindow}

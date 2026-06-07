@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
-import { ensureCdpConnection } from '@/lib/init';
-import ctx from '@/lib/context';
+import {
+  isCdpServerActive,
+  isDesktopSafeMode,
+  isProcessControlAllowed,
+} from '@/lib/cdp/process-manager';
 import * as dns from 'dns';
 
 export const dynamic = 'force-dynamic';
@@ -13,14 +16,19 @@ function probeNetwork(): Promise<boolean> {
 
 export async function GET() {
   const networkOnline = await probeNetwork();
-  
-  // Only attempt CDP connection if network is online
+
+  // Health checks must stay passive. Do not call ensureCdpConnection() here:
+  // that path can auto-recover by killing/restarting Antigravity, which means
+  // a phone/browser poll could unexpectedly mutate the desktop IDE.
   let cdpConnected = false;
+  let cdpWindowCount = 0;
   let cdpError: string | null = null;
   if (networkOnline) {
     try {
-      await ensureCdpConnection();
-      cdpConnected = !!ctx.workbenchPage;
+      const cdpStatus = await isCdpServerActive();
+      cdpConnected = cdpStatus.active && cdpStatus.windowCount > 0;
+      cdpWindowCount = cdpStatus.windowCount;
+      cdpError = cdpStatus.error || null;
     } catch (e: any) {
       cdpError = e.message;
     }
@@ -31,7 +39,10 @@ export async function GET() {
   return NextResponse.json({
     status,
     connected: cdpConnected,
+    cdpWindowCount,
     network: networkOnline,
+    desktopSafeMode: isDesktopSafeMode(),
+    processControlAllowed: isProcessControlAllowed(),
     ...(cdpError ? { error: cdpError } : {}),
     timestamp: Date.now(),
   });

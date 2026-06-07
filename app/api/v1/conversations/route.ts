@@ -1,15 +1,24 @@
 import { NextResponse } from 'next/server';
 import { ensureCdpConnection } from '@/lib/init';
 import ctx from '@/lib/context';
-import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { getIdeConversations } from '@/lib/scraper/ide-conversations';
-import { filterConversationsByWorkspace } from '@/lib/scraper/workspace-filter';
+import {
+  extractProjectFromWindowTitle,
+  filterConversationsByWorkspace,
+} from '@/lib/scraper/workspace-filter';
+import { getRecentProjects, type RecentProject } from '@/lib/cdp/recent-projects';
+import {
+  listBrainConversations,
+  type BrainConversationInfo,
+} from '@/lib/brain-conversations';
+import type { ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 function extractTitle(convDir: string): string | null {
   const taskFile = path.join(convDir, 'task.md');
@@ -56,6 +65,171 @@ function getMatchScore(s1: string, s2: string): number {
   return matches / Math.min(words1.length, words2.length);
 }
 
+function normalize(value?: string | null): string {
+  return (value || '').replace(/\\/g, '/').toLowerCase().trim();
+}
+
+function basenameFromPath(value?: string | null): string {
+  const normalized = (value || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!normalized) return '';
+  return normalized.split('/').filter(Boolean).pop() || normalized;
+}
+
+function sameProjectName(a?: string | null, b?: string | null): boolean {
+  const left = normalize(a);
+  const right = normalize(b);
+  if (!left || !right) return false;
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+function activeProjectFromTitle(projects: RecentProject[], windowTitle?: string | null): RecentProject | null {
+  const projectName = extractProjectFromWindowTitle(windowTitle || undefined);
+  if (projectName) {
+    const byTitle = projects.find((project) => sameProjectName(project.name, projectName));
+    if (byTitle) return byTitle;
+  }
+  return projects[0] || null;
+}
+
+function conversationMatchesProject(conversation: ConversationInfo, project: RecentProject): boolean {
+  const projectName = normalize(project.name);
+  const projectPath = normalize(project.path);
+  const projectBase = normalize(basenameFromPath(project.path));
+  const haystack = [
+    conversation.projectName,
+    conversation.projectPath,
+    conversation.title,
+    conversation.summary,
+    ...(conversation.workspacePaths || []),
+  ].map(normalize).filter(Boolean);
+
+  return haystack.some((value) =>
+    value === projectName ||
+    value === projectBase ||
+    value === projectPath ||
+    value.includes(projectName) ||
+    value.includes(projectBase) ||
+    projectName.includes(value) ||
+    projectBase.includes(value)
+  );
+}
+
+function withProject(conversation: ConversationInfo, project?: { name: string; path?: string } | null): ConversationInfo {
+  if (!project) return conversation;
+  return {
+    ...conversation,
+    projectName: conversation.projectName || project.name,
+    projectPath: conversation.projectPath || project.path,
+  };
+}
+
+function dedupeConversations(conversations: ConversationInfo[]): ConversationInfo[] {
+  const seen = new Set<string>();
+  const deduped: ConversationInfo[] = [];
+
+  for (const conversation of conversations) {
+    const key = conversation.id && !/^-?\d+$/.test(conversation.id)
+      ? `id:${conversation.id}`
+      : `idx:${conversation.index}:${conversation.title}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(conversation);
+  }
+
+  return deduped.sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    if (!a.mtime && !b.mtime) return a.index - b.index;
+    if (!a.mtime) return 1;
+    if (!b.mtime) return -1;
+    return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
+  });
+}
+
+function buildProjectGroups(
+  currentProjectConversations: ConversationInfo[],
+  allBrainConversations: ConversationInfo[],
+  recentProjects: RecentProject[],
+  activeWindowTitle?: string | null,
+): ConversationProjectGroup[] {
+  const activeConversation = currentProjectConversations.find((conversation) => conversation.active);
+  const activeName =
+    activeConversation?.projectName ||
+    extractProjectFromWindowTitle(activeWindowTitle || undefined);
+  const groups = new Map<string, ConversationProjectGroup>();
+
+  const ensureGroup = (project: RecentProject | { name: string; path?: string }, active = false) => {
+    const key = project.path || project.name;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.active = existing.active || active;
+      return existing;
+    }
+    const group: ConversationProjectGroup = {
+      id: key,
+      name: project.name,
+      path: project.path,
+      active,
+      conversationCount: 0,
+      conversations: [],
+    };
+    groups.set(key, group);
+    return group;
+  };
+
+  const activeProject = activeName
+    ? recentProjects.find((project) => sameProjectName(project.name, activeName))
+      || (activeConversation?.projectName ? { name: activeConversation.projectName, path: activeConversation.projectPath } : null)
+    : activeProjectFromTitle(recentProjects, activeWindowTitle);
+  for (const project of recentProjects) {
+    ensureGroup(project, sameProjectName(project.name, activeName));
+  }
+  if (!activeProject && activeName) ensureGroup({ name: activeName }, true);
+
+  const activeGroup = activeProject
+    ? ensureGroup(activeProject, true)
+    : (activeName ? ensureGroup({ name: activeName }, true) : null);
+
+  for (const conversation of currentProjectConversations) {
+    (activeGroup || ensureGroup({ name: conversation.projectName || 'Current project' }, true))
+      .conversations.push(withProject(conversation, activeProject));
+  }
+
+  const other = ensureGroup({ name: 'Other history' }, false);
+  for (const conversation of allBrainConversations) {
+    let target: ConversationProjectGroup | null = null;
+    for (const project of recentProjects) {
+      if (conversationMatchesProject(conversation, project)) {
+        target = ensureGroup(project, sameProjectName(project.name, activeName));
+        break;
+      }
+    }
+    if (!target && conversation.projectName) {
+      target = ensureGroup({ name: conversation.projectName }, sameProjectName(conversation.projectName, activeName));
+    }
+    (target || other).conversations.push(conversation);
+  }
+
+  const ordered = Array.from(groups.values())
+    .map((group) => {
+      const conversations = dedupeConversations(group.conversations);
+      return {
+        ...group,
+        conversationCount: conversations.length,
+        conversations,
+      };
+    })
+    .filter((group) => group.active || group.conversations.length > 0)
+    .sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      const aIdx = recentProjects.findIndex(p => p.path === a.path || p.name === a.name);
+      const bIdx = recentProjects.findIndex(p => p.path === b.path || p.name === b.name);
+      if (aIdx !== bIdx) return (aIdx === -1 ? Number.MAX_SAFE_INTEGER : aIdx) - (bIdx === -1 ? Number.MAX_SAFE_INTEGER : bIdx);
+      return a.name.localeCompare(b.name);
+    });
+
+  return ordered;
+}
+
 /**
  * GET /api/v1/conversations — list conversations from the IDE's history panel.
  *
@@ -63,10 +237,40 @@ function getMatchScore(s1: string, s2: string): number {
  * We enrich each entry with brain metadata (files, mtime, brain UUID) when available.
  */
 export async function GET() {
-  await ensureCdpConnection();
+  let cdpError: string | null = null;
+  try {
+    await ensureCdpConnection();
+  } catch (err: any) {
+    cdpError = err?.message || 'Unable to connect to Antigravity';
+  }
+
+  const activeWindowTitle = ctx.allWorkbenches[ctx.activeWindowIdx]?.title;
+  const recentProjects = getRecentProjects(30);
+  const activeProject = activeProjectFromTitle(recentProjects, activeWindowTitle);
+  const brainConversations = listBrainConversations({
+    windowTitle: activeWindowTitle,
+    projectPath: activeProject?.path,
+    activeId: ctx.activeConversationId,
+  });
+  const allBrainConversations = listBrainConversations({
+    activeId: ctx.activeConversationId,
+    limit: 200,
+  });
+  const brainOnlyProjects = buildProjectGroups(
+    brainConversations,
+    allBrainConversations,
+    recentProjects,
+    activeWindowTitle,
+  );
 
   if (!ctx.workbenchPage) {
-    return NextResponse.json({ conversations: [] });
+    return NextResponse.json({
+      conversations: brainConversations,
+      projects: brainOnlyProjects,
+      source: 'brain',
+      cdpConnected: false,
+      error: cdpError,
+    });
   }
 
   try {
@@ -75,11 +279,11 @@ export async function GET() {
 
     // Pre-calculate brain metadata to enrich IDE conversations with files/mtime/UUID
     const brainData: any[] = [];
-    if (fs.existsSync(BRAIN_DIR)) {
-      const entries = fs.readdirSync(BRAIN_DIR, { withFileTypes: true });
+    if (fs.existsSync(getBrainDir())) {
+      const entries = fs.readdirSync(getBrainDir(), { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          const dirPath = path.join(BRAIN_DIR, entry.name);
+          const dirPath = path.join(getBrainDir(), entry.name);
           const files = getConversationFiles(dirPath);
           const title = extractTitle(dirPath);
           const latestFileMtime = files.reduce((max, f) => {
@@ -93,14 +297,38 @@ export async function GET() {
       }
     }
 
+    const activeIdeConversation = ideConversations.find((c) => c.active);
+    if (activeIdeConversation) {
+      ctx.activeTitle = activeIdeConversation.title || null;
+      if (activeIdeConversation.id) ctx.activeConversationId = activeIdeConversation.id;
+      ctx.activeConversationSource = 'ide';
+    }
+
+    const activeIdeProject = activeIdeConversation?.projectName
+      ? recentProjects.find((project) => sameProjectName(project.name, activeIdeConversation.projectName))
+        || { name: activeIdeConversation.projectName, path: undefined }
+      : activeProject;
+
+    const scopedBrainConversations = listBrainConversations({
+      windowTitle: activeIdeConversation?.projectName || activeWindowTitle,
+      projectPath: activeIdeProject?.path,
+      activeId: ctx.activeConversationId,
+    });
+
     const conversations = ideConversations.map((c) => {
       // Try to find a matching brain entry for this IDE conversation title
-      let mappedId = c.index.toString();
+      let mappedId = c.id || c.index.toString();
       let files: any[] = [];
       let mtime: string | undefined = undefined;
 
+      const exactIdMatch = c.id ? brainData.find((bd) => bd.id === c.id) : null;
+      if (exactIdMatch) {
+        files = exactIdMatch.files;
+        mtime = exactIdMatch.mtime;
+      }
+
       let bestMatch: any = null;
-      for (const bd of brainData) {
+      for (const bd of exactIdMatch ? [] : brainData) {
         if (!bd.title) continue;
         // Exact / substring match — prefer this over fuzzy
         if (bd.title === c.title || bd.title.includes(c.title) || c.title.includes(bd.title)) {
@@ -131,15 +359,41 @@ export async function GET() {
         index: c.index,
         files,
         mtime,
+        projectName: c.projectName || activeIdeProject?.name,
+        projectPath: c.projectPath || activeIdeProject?.path,
+        source: 'ide' as const,
       };
     });
 
-    // Filter to only conversations related to the active window's project
-    const activeWindowTitle = ctx.allWorkbenches[ctx.activeWindowIdx]?.title;
-    const filtered = filterConversationsByWorkspace(conversations, activeWindowTitle);
+    // Include project-local brain history that may not currently be present in
+    // the IDE dropdown. This is important for phones: they can still manage and
+    // open project history even when the CDP/IDE history scrape is incomplete.
+    const seen = new Set(conversations.map(c => c.id).filter(Boolean));
+    const brainOnly = scopedBrainConversations.filter((c: BrainConversationInfo) => !seen.has(c.id));
 
-    return NextResponse.json({ conversations: filtered });
+    // Filter to only conversations related to the active window's project
+    const filtered = filterConversationsByWorkspace([...conversations, ...brainOnly], activeWindowTitle)
+      .map((conversation) => withProject(conversation, activeIdeProject));
+    const projects = buildProjectGroups(
+      filtered,
+      allBrainConversations,
+      recentProjects,
+      activeWindowTitle,
+    );
+
+    return NextResponse.json({
+      conversations: filtered,
+      projects,
+      source: brainOnly.length > 0 ? 'ide+brain' : 'ide',
+      cdpConnected: true,
+    });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({
+      conversations: brainConversations,
+      projects: brainOnlyProjects,
+      source: 'brain',
+      cdpConnected: false,
+      error: err.message,
+    });
   }
 }

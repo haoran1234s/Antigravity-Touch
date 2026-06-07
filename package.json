@@ -1,7 +1,7 @@
 {
-  "name": "antigravity-mobile-proxy",
+  "name": "antigravity-touch",
   "version": "1.1.4",
-  "description": "Chat with your Antigravity AI coding agent from any device — mobile proxy with secure ngrok tunnel, real-time streaming, and remote approve/reject",
+  "description": "Chat with your Antigravity AI coding agent from any device — mobile touch controller with secure ngrok tunnel, real-time streaming, and remote approve/reject",
   "keywords": [
     "antigravity",
     "ide",
@@ -27,18 +27,18 @@
   "engines": {
     "node": ">=18"
   },
-  "homepage": "https://github.com/Belal33/antigravity-mobile-proxy#readme",
+  "homepage": "https://github.com/Belal33/antigravity-touch#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Belal33/antigravity-mobile-proxy.git"
+    "url": "git+https://github.com/Belal33/antigravity-touch.git"
   },
   "bugs": {
-    "url": "https://github.com/Belal33/antigravity-mobile-proxy/issues"
+    "url": "https://github.com/Belal33/antigravity-touch/issues"
   },
   "author": "Belal",
   "license": "MIT",
   "bin": {
-    "antigravity-mobile-proxy": "bin/cli.js"
+    "antigravity-touch": "bin/cli.js"
   },
   "files": [
     "bin/",
@@ -55,10 +55,12 @@
   ],
   "scripts": {
     "dev": "next dev -p 5555",
-    "build": "NODE_ENV=production next build --webpack",
+    "build": "next build --webpack",
     "postbuild": "node scripts/patch-next.js",
     "start": "next start -p 5555",
     "tunnel": "node bin/cli.js",
+    "remote": "node bin/cli.js",
+    "local": "node bin/cli.js --no-tunnel",
     "lint": "eslint .",
     "type-check": "tsc --noEmit",
     "prepublishOnly": "NODE_ENV=production npm run build",

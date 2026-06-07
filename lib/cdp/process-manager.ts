@@ -12,15 +12,41 @@
 
 import { exec, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
-import { existsSync, statSync, readFileSync, readdirSync } from 'fs';
 import { resolve } from 'path';
 import * as os from 'os';
 import { logger } from '../logger';
+import { isAntigravityWorkbenchTarget } from './targets';
+
+// Keep filesystem probes runtime-only. Next.js standalone tracing otherwise sees
+// Antigravity/home-directory paths and tries to glob huge Windows profile
+// folders (for example "Application Data"), which can make `next build` fail.
+const runtimeFs = () => eval('require')('fs') as typeof import('fs');
+const runtimeEnv = (): NodeJS.ProcessEnv => eval('process').env;
+const existsSync = (path: import('fs').PathLike): boolean => runtimeFs().existsSync(path);
+const statSync = (path: import('fs').PathLike): import('fs').Stats => runtimeFs().statSync(path);
+const readFileSync = (path: import('fs').PathOrFileDescriptor, options?: any): any => runtimeFs().readFileSync(path, options);
+const readdirSync = (path: import('fs').PathLike, options?: any): any => runtimeFs().readdirSync(path, options);
 
 const execAsync = promisify(exec);
 
 const CDP_PORT_RAW = process.env.CDP_PORT || '9223';
 const CDP_PORT = parseInt(CDP_PORT_RAW, 10);
+
+const isTruthyEnv = (value: string | undefined): boolean =>
+  /^(1|true|yes|on)$/i.test((value || '').trim());
+
+export function isDesktopSafeMode(): boolean {
+  const env = runtimeEnv();
+  return (
+    isTruthyEnv(env.ANTIGRAVITY_DESKTOP_SAFE_MODE) ||
+    isTruthyEnv(env.ANTIGRAVITY_SAFE_MODE) ||
+    isTruthyEnv(env.ANTIGRAVITY_NO_PROCESS_CONTROL)
+  );
+}
+
+export function isProcessControlAllowed(): boolean {
+  return !isDesktopSafeMode();
+}
 
 // Use string concatenation to defeat incredibly aggressive Turbopack/Next.js static Dead Code Elimination
 // which was previously executing os.platform() at build time and optimizing away the entire Windows block.
@@ -53,8 +79,9 @@ if (isWsl()) {
  */
 function getAntigravityBinary(): string {
   // Allow explicit override via env
-  if (process.env.ANTIGRAVITY_BINARY) {
-    const customBin = process.env.ANTIGRAVITY_BINARY;
+  const env = runtimeEnv();
+  if (env.ANTIGRAVITY_BINARY) {
+    const customBin = env.ANTIGRAVITY_BINARY;
     if (!existsSync(customBin)) {
       logger.warn(`[ProcessManager] ANTIGRAVITY_BINARY set to "${customBin}" but file does not exist.`);
     }
@@ -64,11 +91,11 @@ function getAntigravityBinary(): string {
   if (isWin()) {
     // Windows: check common install locations
     const candidates = [
-      resolve(process.env.LOCALAPPDATA || '', 'Programs', 'Antigravity', 'Antigravity.exe'),
-      resolve(process.env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Antigravity', 'Antigravity.exe'),
-      resolve(process.env.PROGRAMFILES || 'C:\\Program Files', 'Antigravity', 'Antigravity.exe'),
+      resolve(env.LOCALAPPDATA || '', 'Programs', 'Antigravity', 'Antigravity.exe'),
+      resolve(env.PROGRAMFILES || 'C:\\Program Files', 'Google', 'Antigravity', 'Antigravity.exe'),
+      resolve(env.PROGRAMFILES || 'C:\\Program Files', 'Antigravity', 'Antigravity.exe'),
       // Also check x86 Program Files
-      resolve(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Antigravity', 'Antigravity.exe'),
+      resolve(env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Antigravity', 'Antigravity.exe'),
     ];
     for (const candidate of candidates) {
       if (candidate && existsSync(candidate)) return candidate;
@@ -86,7 +113,7 @@ function getAntigravityBinary(): string {
 
     try {
       const skipDirs = new Set(['Public', 'Default', 'Default User', 'All Users', 'desktop.ini']);
-      const userDirs = readdirSync(windowsUsersDir).filter(u => !skipDirs.has(u));
+      const userDirs = (readdirSync(windowsUsersDir) as string[]).filter((u: string) => !skipDirs.has(u));
       for (const user of userDirs) {
         wslCandidates.push(
           resolve(windowsUsersDir, user, 'AppData/Local/Programs/Antigravity/Antigravity.exe'),
@@ -121,7 +148,7 @@ function getAntigravityBinary(): string {
     const macBinary = '/Applications/Antigravity.app/Contents/MacOS/Antigravity';
     if (existsSync(macBinary)) return macBinary;
     // Also check user Applications folder
-    const userMacBinary = resolve(process.env.HOME || '', 'Applications', 'Antigravity.app', 'Contents', 'MacOS', 'Antigravity');
+    const userMacBinary = resolve(env.HOME || '', 'Applications', 'Antigravity.app', 'Contents', 'MacOS', 'Antigravity');
     if (existsSync(userMacBinary)) return userMacBinary;
     return macBinary; // fallback to standard path
   }
@@ -169,9 +196,7 @@ export async function isCdpServerActive(): Promise<{
       return { active: false, windowCount: 0, error: `HTTP ${response.status}` };
     }
     const pages = await response.json() as any[];
-    const workbenches = pages.filter(
-      (p: any) => p.url?.includes('workbench.html') && !p.url?.includes('jetski')
-    );
+    const workbenches = pages.filter((p: any) => isAntigravityWorkbenchTarget(p));
     return { active: true, windowCount: workbenches.length };
   } catch (e: any) {
     return { active: false, windowCount: 0, error: e.message };
@@ -202,6 +227,15 @@ export async function startCdpServer(
     return {
       success: true,
       message: `CDP server already active on port ${CDP_PORT} with ${status.windowCount} window(s).`,
+    };
+  }
+
+  if (!isProcessControlAllowed()) {
+    return {
+      success: false,
+      message:
+        'Antigravity process control is disabled by ANTIGRAVITY_DESKTOP_SAFE_MODE. ' +
+        'The proxy will not start, restart, or kill the desktop IDE.',
     };
   }
 
@@ -322,6 +356,15 @@ export async function openNewWindow(projectDir: string): Promise<{
   success: boolean;
   message: string;
 }> {
+  if (!isProcessControlAllowed()) {
+    return {
+      success: false,
+      message:
+        'Antigravity process control is disabled by ANTIGRAVITY_DESKTOP_SAFE_MODE. ' +
+        'The proxy will not open desktop IDE windows.',
+    };
+  }
+
   // resolve() handles both absolute ('/home/user/proj') and relative ('my-proj') paths correctly
   const absoluteDir = resolve(projectDir);
 
@@ -406,7 +449,7 @@ export async function getWindowTargets(): Promise<{
     }
     const pages = await response.json() as any[];
     const workbenches = pages
-      .filter((p: any) => p.url?.includes('workbench.html') && !p.url?.includes('jetski'))
+      .filter((p: any) => isAntigravityWorkbenchTarget(p))
       .map((p: any) => ({
         id: p.id,
         title: p.title || 'Untitled',

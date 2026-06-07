@@ -40,7 +40,7 @@ const fmt = {
 };
 
 // ── Config file path ────────────────────────────────────────────────────
-const CONFIG_DIR = path.join(os.homedir(), '.antigravity-mobile-proxy');
+const CONFIG_DIR = path.join(os.homedir(), '.antigravity-touch');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 function loadConfig() {
@@ -157,7 +157,7 @@ function openBrowser(url) {
 function printBanner() {
   console.log('');
   console.log(`  ${c.bold}${c.cyan}╔═══════════════════════════════════════════════════════╗${c.reset}`);
-  console.log(`  ${c.bold}${c.cyan}║${c.reset}  ${c.bold}🚀 Antigravity Mobile Proxy${c.reset}                          ${c.bold}${c.cyan}║${c.reset}`);
+  console.log(`  ${c.bold}${c.cyan}║${c.reset}  ${c.bold}🚀 Antigravity Touch${c.reset}                          ${c.bold}${c.cyan}║${c.reset}`);
   console.log(`  ${c.bold}${c.cyan}║${c.reset}  ${c.dim}Secure tunnel to your IDE with Google OAuth${c.reset}          ${c.bold}${c.cyan}║${c.reset}`);
   console.log(`  ${c.bold}${c.cyan}╚═══════════════════════════════════════════════════════╝${c.reset}`);
   console.log('');
@@ -187,8 +187,8 @@ function parseArgs() {
 function printHelp() {
   printBanner();
   console.log(`  ${fmt.bold('Usage:')}`);
-  console.log(`    ${fmt.cyan('npx antigravity-mobile-proxy')}                ${fmt.dim('# Interactive setup wizard')}`);
-  console.log(`    ${fmt.cyan('npx antigravity-mobile-proxy --email me@gmail.com')}  ${fmt.dim('# Skip wizard')}`);
+  console.log(`    ${fmt.cyan('npx antigravity-touch')}                ${fmt.dim('# Interactive setup wizard')}`);
+  console.log(`    ${fmt.cyan('npx antigravity-touch --email me@gmail.com')}  ${fmt.dim('# Skip wizard')}`);
   console.log('');
   console.log(`  ${fmt.bold('Options:')}`);
   console.log(`    ${fmt.cyan('--email')} <email>       Google email to allow access`);
@@ -205,8 +205,8 @@ function printHelp() {
   console.log(`    ${fmt.cyan('NGROK_AUTHTOKEN')}       Your ngrok authtoken`);
   console.log('');
   console.log(`  ${fmt.bold('Always-on setup:')}`);
-  console.log(`    ${fmt.dim('1.')} Run the wizard first: ${fmt.cyan('npx antigravity-mobile-proxy')}`);
-  console.log(`    ${fmt.dim('2.')} Install service:      ${fmt.cyan('npx antigravity-mobile-proxy --install')}`);
+  console.log(`    ${fmt.dim('1.')} Run the wizard first: ${fmt.cyan('npx antigravity-touch')}`);
+  console.log(`    ${fmt.dim('2.')} Install service:      ${fmt.cyan('npx antigravity-touch --install')}`);
   console.log(`    ${fmt.dim('   The proxy will now auto-start on login and restart on crashes.')}`);
   console.log('');
 }
@@ -253,7 +253,7 @@ async function runWizard(cliArgs) {
   const isFirstRun = !config.email && !config.port;
 
   if (isFirstRun) {
-    console.log(`  ${fmt.info('Welcome! Let\'s set up your Antigravity Mobile Proxy.')}`);
+    console.log(`  ${fmt.info('Welcome! Let\'s set up your Antigravity Touch.')}`);
     console.log(`  ${fmt.dim('This wizard will guide you through the configuration.')}`);
     console.log(`  ${fmt.dim('Your settings will be saved for next time.')}`);
     console.log('');
@@ -939,7 +939,7 @@ class TunnelManager {
         console.log('');
         console.log(`  ${fmt.warn('Your authtoken may be invalid or expired.')}`);
         console.log(`  ${fmt.dim('Get a new one at:')} ${fmt.link('https://dashboard.ngrok.com/get-started/your-authtoken')}`);
-        console.log(`  ${fmt.dim('Then run:')} ${fmt.cyan('npx antigravity-mobile-proxy --reset')}`);
+        console.log(`  ${fmt.dim('Then run:')} ${fmt.cyan('npx antigravity-touch --reset')}`);
         return;
       }
 
@@ -1072,7 +1072,7 @@ function printLocalOnly(port) {
 // ── Auto-Start Service Manager ──────────────────────────────────────────
 // Cross-platform: systemd (Linux), launchd (macOS), Task Scheduler (Windows)
 
-const SERVICE_NAME = 'antigravity-proxy';
+const SERVICE_NAME = 'antigravity-touch';
 
 function getServicePaths() {
   const platform = process.platform;
@@ -1088,14 +1088,14 @@ function getServicePaths() {
     return {
       type: 'launchd',
       dir: path.join(home, 'Library', 'LaunchAgents'),
-      file: path.join(home, 'Library', 'LaunchAgents', `com.antigravity.proxy.plist`),
+      file: path.join(home, 'Library', 'LaunchAgents', `com.antigravity.touch.plist`),
     };
   } else if (platform === 'win32') {
     return {
       type: 'taskscheduler',
       dir: null, // Task Scheduler doesn't use a file directory
       file: null,
-      taskName: 'AntigravityProxy',
+      taskName: 'AntigravityTouch',
     };
   }
   return { type: 'unknown' };
@@ -1115,7 +1115,7 @@ function buildServiceConfig({ email, port, authtoken }) {
     // Without these, spawning Antigravity from auto-recovery will crash (exit 0)
     // and the process reuse mechanism may corrupt manually-opened instances.
     return `[Unit]
-Description=Antigravity Mobile Proxy (ngrok tunnel + Next.js server)
+Description=Antigravity Touch (ngrok tunnel + Next.js server)
 After=network-online.target graphical-session.target
 Wants=network-online.target
 
@@ -1142,13 +1142,13 @@ WantedBy=default.target
 
   if (svc.type === 'launchd') {
     // ── macOS: launchd plist ─────────────────────────────────────────
-    const logDir = path.join(os.homedir(), '.antigravity-mobile-proxy', 'logs');
+    const logDir = path.join(os.homedir(), '.antigravity-touch', 'logs');
     return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.antigravity.proxy</string>
+  <string>com.antigravity.touch</string>
   <key>ProgramArguments</key>
   <array>
     <string>${nodePath}</string>
@@ -1193,7 +1193,7 @@ WantedBy=default.target
     // We use a VBScript wrapper to launch Node invisibly (no console window).
     // The VBS file is written during --install and the scheduled task
     // invokes wscript.exe pointing at that .vbs file.
-    const vbsDir = path.join(os.homedir(), '.antigravity-mobile-proxy');
+    const vbsDir = path.join(os.homedir(), '.antigravity-touch');
     const vbsPath = path.join(vbsDir, 'launcher.vbs');
 
     // VBScript content: Run(..., 0, False) → 0 = hidden window, False = don't wait
@@ -1227,14 +1227,14 @@ async function installService() {
 
   if (!email) {
     console.log(`  ${fmt.error('No email configured yet.')}`);
-    console.log(`  ${fmt.dim('Run the wizard first:')} ${fmt.cyan('npx antigravity-mobile-proxy')}`);
-    console.log(`  ${fmt.dim('Then run:')} ${fmt.cyan('npx antigravity-mobile-proxy --install')}`);
+    console.log(`  ${fmt.dim('Run the wizard first:')} ${fmt.cyan('npx antigravity-touch')}`);
+    console.log(`  ${fmt.dim('Then run:')} ${fmt.cyan('npx antigravity-touch --install')}`);
     process.exit(1);
   }
 
   if (!authtoken) {
     console.log(`  ${fmt.error('No ngrok authtoken found.')}`);
-    console.log(`  ${fmt.dim('Run the wizard first:')} ${fmt.cyan('npx antigravity-mobile-proxy')}`);
+    console.log(`  ${fmt.dim('Run the wizard first:')} ${fmt.cyan('npx antigravity-touch')}`);
     process.exit(1);
   }
 
@@ -1297,13 +1297,13 @@ async function installService() {
     console.log(`  ${fmt.dim('Check status:')} ${fmt.cyan(`systemctl --user status ${SERVICE_NAME}`)}`);
     console.log(`  ${fmt.dim('Stop:')}          ${fmt.cyan(`systemctl --user stop ${SERVICE_NAME}`)}`);
     console.log(`  ${fmt.dim('Restart:')}       ${fmt.cyan(`systemctl --user restart ${SERVICE_NAME}`)}`);
-    console.log(`  ${fmt.dim('Uninstall:')}     ${fmt.cyan('npx antigravity-mobile-proxy --uninstall')}`);
+    console.log(`  ${fmt.dim('Uninstall:')}     ${fmt.cyan('npx antigravity-touch --uninstall')}`);
     console.log('');
 
   } else if (svc.type === 'launchd') {
     // ── macOS: launchd ──────────────────────────────────────────────
     const content = buildServiceConfig({ email, port, authtoken });
-    const logDir = path.join(os.homedir(), '.antigravity-mobile-proxy', 'logs');
+    const logDir = path.join(os.homedir(), '.antigravity-touch', 'logs');
 
     if (!fs.existsSync(svc.dir)) {
       fs.mkdirSync(svc.dir, { recursive: true });
@@ -1336,7 +1336,7 @@ async function installService() {
     console.log(`  ${fmt.dim('Check status:')} ${fmt.cyan('launchctl list | grep antigravity')}`);
     console.log(`  ${fmt.dim('Stop:')}          ${fmt.cyan(`launchctl unload ${svc.file}`)}`);
     console.log(`  ${fmt.dim('Start:')}         ${fmt.cyan(`launchctl load ${svc.file}`)}`);
-    console.log(`  ${fmt.dim('Uninstall:')}     ${fmt.cyan('npx antigravity-mobile-proxy --uninstall')}`);
+    console.log(`  ${fmt.dim('Uninstall:')}     ${fmt.cyan('npx antigravity-touch --uninstall')}`);
     console.log('');
 
   } else if (svc.type === 'taskscheduler') {
@@ -1374,7 +1374,7 @@ async function installService() {
     console.log(`  ${fmt.dim('The proxy runs silently in the background — no console window.')}`);
     console.log('');
     console.log(`  ${fmt.dim('Check status:')} ${fmt.cyan(`schtasks /Query /TN "${svc.taskName}"`)}`);
-    console.log(`  ${fmt.dim('Uninstall:')}     ${fmt.cyan('npx antigravity-mobile-proxy --uninstall')}`);
+    console.log(`  ${fmt.dim('Uninstall:')}     ${fmt.cyan('npx antigravity-touch --uninstall')}`);
     console.log('');
 
   } else {
@@ -1416,7 +1416,7 @@ async function uninstallService() {
     }
 
     // Clean up the VBS launcher script
-    const vbsPath = path.join(os.homedir(), '.antigravity-mobile-proxy', 'launcher.vbs');
+    const vbsPath = path.join(os.homedir(), '.antigravity-touch', 'launcher.vbs');
     try {
       if (fs.existsSync(vbsPath)) {
         fs.unlinkSync(vbsPath);
@@ -1431,7 +1431,7 @@ async function uninstallService() {
 
   console.log('');
   console.log(`  ${fmt.dim('The proxy will no longer auto-start.')}`);
-  console.log(`  ${fmt.dim('You can still run it manually:')} ${fmt.cyan('npx antigravity-mobile-proxy')}`);
+  console.log(`  ${fmt.dim('You can still run it manually:')} ${fmt.cyan('npx antigravity-touch')}`);
   console.log('');
 }
 
@@ -1445,7 +1445,7 @@ async function showServiceStatus() {
   if (svc.type === 'systemd') {
     if (!fs.existsSync(svc.file)) {
       console.log(`  ${fmt.warn('Service not installed.')}`);
-      console.log(`  ${fmt.dim('Install with:')} ${fmt.cyan('npx antigravity-mobile-proxy --install')}`);
+      console.log(`  ${fmt.dim('Install with:')} ${fmt.cyan('npx antigravity-touch --install')}`);
       console.log('');
       process.exit(0);
     }
@@ -1469,7 +1469,7 @@ async function showServiceStatus() {
   } else if (svc.type === 'launchd') {
     if (!fs.existsSync(svc.file)) {
       console.log(`  ${fmt.warn('Service not installed.')}`);
-      console.log(`  ${fmt.dim('Install with:')} ${fmt.cyan('npx antigravity-mobile-proxy --install')}`);
+      console.log(`  ${fmt.dim('Install with:')} ${fmt.cyan('npx antigravity-touch --install')}`);
       console.log('');
       process.exit(0);
     }
@@ -1496,7 +1496,7 @@ async function showServiceStatus() {
       console.log(`  ${fmt.dim(result.trim())}`);
     } catch {
       console.log(`  ${fmt.warn('Service not installed.')}`);
-      console.log(`  ${fmt.dim('Install with:')} ${fmt.cyan('npx antigravity-mobile-proxy --install')}`);
+      console.log(`  ${fmt.dim('Install with:')} ${fmt.cyan('npx antigravity-touch --install')}`);
     }
   } else {
     console.log(`  ${fmt.error(`Unsupported platform: ${process.platform}`)}`);

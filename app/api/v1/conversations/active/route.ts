@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server';
 import ctx from '@/lib/context';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 function extractTitle(convDir: string): string | null {
   const taskFile = path.join(convDir, 'task.md');
@@ -57,13 +57,13 @@ function getConversationFiles(convDir: string) {
  */
 function autoDetectActiveConversation(): string | null {
   try {
-    if (!fs.existsSync(BRAIN_DIR)) return null;
-    const entries = fs.readdirSync(BRAIN_DIR, { withFileTypes: true });
+    if (!fs.existsSync(getBrainDir())) return null;
+    const entries = fs.readdirSync(getBrainDir(), { withFileTypes: true });
     let latest: { id: string; mtime: number } | null = null;
 
     for (const entry of entries) {
       if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
-      const dirPath = path.join(BRAIN_DIR, entry.name);
+      const dirPath = path.join(getBrainDir(), entry.name);
       const stat = fs.statSync(dirPath);
       // Use the most recently modified directory
       if (!latest || stat.mtimeMs > latest.mtime) {
@@ -96,7 +96,7 @@ export async function GET() {
     return NextResponse.json({ active: false });
   }
 
-  const convDir = path.join(BRAIN_DIR, ctx.activeConversationId);
+  const convDir = path.join(getBrainDir(), ctx.activeConversationId);
   if (!fs.existsSync(convDir)) {
     ctx.activeConversationId = null;
     return NextResponse.json({ active: false });

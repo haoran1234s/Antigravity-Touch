@@ -1,26 +1,26 @@
 import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 /**
  * GET /api/v1/artifacts — list all conversation directories with artifact files.
  */
 export async function GET() {
   try {
-    if (!fs.existsSync(BRAIN_DIR)) {
+    if (!fs.existsSync(getBrainDir())) {
       return NextResponse.json({ artifacts: [] });
     }
 
     const dirs = fs
-      .readdirSync(BRAIN_DIR, { withFileTypes: true })
+      .readdirSync(getBrainDir(), { withFileTypes: true })
       .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
       .map((d) => {
-        const dirPath = path.join(BRAIN_DIR, d.name);
+        const dirPath = path.join(getBrainDir(), d.name);
         try {
           const files = fs
             .readdirSync(dirPath)

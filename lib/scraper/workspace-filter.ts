@@ -8,10 +8,10 @@
 
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { logger } from '../logger';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 // Cache: conversationId → { workspace paths found, mtime of latest artifact }
 interface CacheEntry {
@@ -57,7 +57,7 @@ export function extractProjectFromWindowTitle(windowTitle: string | undefined): 
  * and extract unique project/workspace folder names from them.
  */
 function scanConversationForWorkspaces(convId: string): string[] {
-  const convDir = path.join(BRAIN_DIR, convId);
+  const convDir = path.join(getBrainDir(), convId);
   const workspaces = new Set<string>();
 
   try {
@@ -132,7 +132,7 @@ function scanConversationForWorkspaces(convId: string): string[] {
  * Get the latest mtime for artifacts in a conversation directory.
  */
 function getLatestMtime(convId: string): number {
-  const convDir = path.join(BRAIN_DIR, convId);
+  const convDir = path.join(getBrainDir(), convId);
   let latest = 0;
   try {
     const entries = fs.readdirSync(convDir, { recursive: true, withFileTypes: true });

@@ -1,6 +1,6 @@
-# Antigravity IDE — Technical Knowledge Base
+# Antigravity IDE 鈥?Technical Knowledge Base
 
-> Compiled during remote access investigation — March 6, 2026  
+> Compiled during remote access investigation 鈥?March 6, 2026  
 > Antigravity version: **1.107.0** (installed via `.deb` package)
 
 ---
@@ -19,27 +19,27 @@ Antigravity is a **heavily modified VS Code fork** built on Electron, launched N
 
 ```
 /usr/share/antigravity/
-├── antigravity                          # Electron binary
-├── bin/
-│   ├── antigravity                      # Shell script (CLI wrapper)
-│   └── antigravity-tunnel               # Tunnel/server binary (NOT shipped by default)
-└── resources/app/
-    ├── out/cli.js                       # CLI logic
-    └── extensions/
-        └── antigravity/                 # Built-in agent extension
-            ├── package.json             # Extension manifest (google.antigravity)
-            ├── bin/
-            │   ├── fd                   # File discovery tool
-            │   ├── language_server_linux_x64  # Language server binary
-            │   └── sandbox-wrapper.sh
-            ├── dist/
-            │   └── languageServer/
-            │       └── cert.pem
-            ├── out/                     # Compiled extension code
-            ├── assets/
-            ├── customEditor/
-            └── schemas/
-                └── mcp_config.schema.json  # MCP configuration schema
+鈹溾攢鈹€ antigravity                          # Electron binary
+鈹溾攢鈹€ bin/
+鈹?  鈹溾攢鈹€ antigravity                      # Shell script (CLI wrapper)
+鈹?  鈹斺攢鈹€ antigravity-tunnel               # Tunnel/server binary (NOT shipped by default)
+鈹斺攢鈹€ resources/app/
+    鈹溾攢鈹€ out/cli.js                       # CLI logic
+    鈹斺攢鈹€ extensions/
+        鈹斺攢鈹€ antigravity/                 # Built-in agent extension
+            鈹溾攢鈹€ package.json             # Extension manifest (google.antigravity)
+            鈹溾攢鈹€ bin/
+            鈹?  鈹溾攢鈹€ fd                   # File discovery tool
+            鈹?  鈹溾攢鈹€ language_server_linux_x64  # Language server binary
+            鈹?  鈹斺攢鈹€ sandbox-wrapper.sh
+            鈹溾攢鈹€ dist/
+            鈹?  鈹斺攢鈹€ languageServer/
+            鈹?      鈹斺攢鈹€ cert.pem
+            鈹溾攢鈹€ out/                     # Compiled extension code
+            鈹溾攢鈹€ assets/
+            鈹溾攢鈹€ customEditor/
+            鈹斺攢鈹€ schemas/
+                鈹斺攢鈹€ mcp_config.schema.json  # MCP configuration schema
 ```
 
 ---
@@ -72,17 +72,17 @@ Opens the agent chat panel with the given prompt.
 | `--profile <name>` | Use specific profile |
 | Stdin support | `cat file.py \| antigravity chat "explain this" -` |
 
-> ⚠️ **Requires GUI** — opens the desktop app, does not run headlessly.
+> 鈿狅笍 **Requires GUI** 鈥?opens the desktop app, does not run headlessly.
 
 #### `antigravity serve-web`
 Serves a web-based editor UI in browsers.
 
-> ⚠️ **Serves vanilla VS Code Server**, not Antigravity. The agent extension (`google.antigravity`) is rejected by the server.
+> 鈿狅笍 **Serves vanilla VS Code Server**, not Antigravity. The agent extension (`google.antigravity`) is rejected by the server.
 
 #### `antigravity tunnel`
 Creates a secure remote tunnel.
 
-> ⚠️ **Requires `antigravity-tunnel` binary** which is not shipped in the `.deb` package. Can be substituted with the VS Code CLI binary, but will only tunnel vanilla VS Code.
+> 鈿狅笍 **Requires `antigravity-tunnel` binary** which is not shipped in the `.deb` package. Can be substituted with the VS Code CLI binary, but will only tunnel vanilla VS Code.
 
 ---
 
@@ -91,21 +91,21 @@ Creates a secure remote tunnel.
 The built-in agent extension (`google.antigravity v0.2.0`) includes:
 
 ### Agent Commands
-- `antigravity.prioritized.chat.open` — Open agent chat
-- `antigravity.prioritized.command.open` — Inline command (Ctrl+I / Cmd+I)
-- `antigravity.terminalCommand.run` — Run terminal command (Ctrl+Enter)
-- `antigravity.terminalCommand.accept` — Accept suggestion (Alt+Enter)
-- `antigravity.terminalCommand.reject` — Reject suggestion (Ctrl+Backspace)
-- `antigravity.generateCommitMessage` — AI commit message
-- `antigravity.openBrowser` — Built-in browser
-- `antigravity.startDemoMode` / `endDemoMode` — Demo mode (Beta)
-- `antigravity.openConversationPicker` — Conversation picker (Ctrl+Shift+A)
+- `antigravity.prioritized.chat.open` 鈥?Open agent chat
+- `antigravity.prioritized.command.open` 鈥?Inline command (Ctrl+I / Cmd+I)
+- `antigravity.terminalCommand.run` 鈥?Run terminal command (Ctrl+Enter)
+- `antigravity.terminalCommand.accept` 鈥?Accept suggestion (Alt+Enter)
+- `antigravity.terminalCommand.reject` 鈥?Reject suggestion (Ctrl+Backspace)
+- `antigravity.generateCommitMessage` 鈥?AI commit message
+- `antigravity.openBrowser` 鈥?Built-in browser
+- `antigravity.startDemoMode` / `endDemoMode` 鈥?Demo mode (Beta)
+- `antigravity.openConversationPicker` 鈥?Conversation picker (Ctrl+Shift+A)
 
 ### Agent Step Controls
-- `antigravity.agent.acceptAgentStep` — Accept agent step (Alt+Enter)
-- `antigravity.agent.rejectAgentStep` — Reject agent step (Alt+Shift+Backspace)
-- `antigravity.prioritized.agentFocusNextHunk` / `PreviousHunk` — Navigate diffs (Alt+J / Alt+K)
-- `antigravity.prioritized.agentAcceptFocusedHunk` / `RejectFocusedHunk` — Accept/reject focused diff
+- `antigravity.agent.acceptAgentStep` 鈥?Accept agent step (Alt+Enter)
+- `antigravity.agent.rejectAgentStep` 鈥?Reject agent step (Alt+Shift+Backspace)
+- `antigravity.prioritized.agentFocusNextHunk` / `PreviousHunk` 鈥?Navigate diffs (Alt+J / Alt+K)
+- `antigravity.prioritized.agentAcceptFocusedHunk` / `RejectFocusedHunk` 鈥?Accept/reject focused diff
 
 ### Import Commands
 Supports migrating settings and extensions from:
@@ -151,9 +151,9 @@ Antigravity supports **Model Context Protocol** servers:
 
 | Limitation | Detail |
 |---|---|
-| **No headless agent mode** | `antigravity chat` requires the desktop GUI — no terminal-only agent |
+| **No headless agent mode** | `antigravity chat` requires the desktop GUI 鈥?no terminal-only agent |
 | **`serve-web` serves vanilla VS Code** | The command delegates to VS Code CLI which downloads a standard server |
-| **Agent extension rejected by VS Code Server** | `Marked extension as removed google.antigravity-0.2.0` — cannot copy into `.vscode-server` |
+| **Agent extension rejected by VS Code Server** | `Marked extension as removed google.antigravity-0.2.0` 鈥?cannot copy into `.vscode-server` |
 | **`antigravity-tunnel` not shipped** | The binary at `/usr/share/antigravity/bin/antigravity-tunnel` is missing from the `.deb` package |
 | **Tight desktop coupling** | The agent depends on Electron APIs and Antigravity-specific VS Code modifications not present in the server |
 
@@ -161,9 +161,9 @@ Antigravity supports **Model Context Protocol** servers:
 
 ## Workarounds & Notes
 
-1. **The VS Code CLI binary can substitute for `antigravity-tunnel`** — fixes `serve-web` and `tunnel` commands, but they serve vanilla VS Code
-2. **VS Code Server extensions get stored at** `~/.vscode-server/extensions/` — separate from desktop extensions
-3. **The server auto-installs `google.geminicodeassist`** — Gemini Code Assist works in the web version but is NOT the same as the Antigravity agent
+1. **The VS Code CLI binary can substitute for `antigravity-tunnel`** 鈥?fixes `serve-web` and `tunnel` commands, but they serve vanilla VS Code
+2. **VS Code Server extensions get stored at** `~/.vscode-server/extensions/` 鈥?separate from desktop extensions
+3. **The server auto-installs `google.geminicodeassist`** 鈥?Gemini Code Assist works in the web version but is NOT the same as the Antigravity agent
 4. **`loginctl enable-linger $USER`** may be needed for user-level systemd services to persist after logout
 5. **SSE Stream Polling:** When migrating from Node.js `http.createServer` + `setInterval` to Next.js `ReadableStream`, use `setInterval` for polling instead of recursive `async` functions. `setInterval` survives per-tick errors; recursive `await` propagates errors and kills the stream. Also set `ctx.lastActionTimestamp` after `sendMessage` to activate the 15-second done-detection guard.
 
@@ -188,7 +188,7 @@ Antigravity supports **Model Context Protocol** servers:
 All can be overridden with the `ANTIGRAVITY_BINARY` environment variable.
 
 ### WSL Detection (Learned March 2026)
-- **`process.platform` returns `'linux'` in WSL**, not `'win32'` — the code must explicitly detect WSL.
+- **`process.platform` returns `'linux'` in WSL**, not `'win32'` 鈥?the code must explicitly detect WSL.
 - **Detection method:** Read `/proc/version` and check for `/microsoft|wsl/i` regex match.
 - **Binary resolution in WSL:** The Windows filesystem is mounted at `/mnt/c/`. Scan `/mnt/c/Users/` (skipping system dirs like `Public`, `Default`) to find user-installed binaries.
 - **Process management in WSL:** Use `taskkill.exe` (with `.exe` suffix) instead of `killall`/`taskkill` to invoke the Windows process killer from WSL.
@@ -204,7 +204,7 @@ All can be overridden with the `ANTIGRAVITY_BINARY` environment variable.
 - **Windows**: Use `shell: true` for `.exe` resolution; `detached` is not needed
 
 ### Opening New Windows
-- If CDP is already active (an Antigravity instance is running), launching the binary with just a directory path (`/usr/share/antigravity/antigravity /path/to/project`) opens a new window in the same Electron process — CDP remains active and discovers the new window.
+- If CDP is already active (an Antigravity instance is running), launching the binary with just a directory path (`/usr/share/antigravity/antigravity /path/to/project`) opens a new window in the same Electron process 鈥?CDP remains active and discovers the new window.
 - After opening, re-discover workbenches via the `/json` endpoint to pick up the new page.
 
 ### Closing Windows
@@ -213,35 +213,35 @@ All can be overridden with the `ANTIGRAVITY_BINARY` environment variable.
 - After closing, re-discover workbenches and reset the active window index if needed.
 
 ### CDP Health Checking
-- Poll `http://localhost:{port}/json` — if it returns a valid JSON array, CDP is active.
+- Poll `http://localhost:{port}/json` 鈥?if it returns a valid JSON array, CDP is active.
 - Filter for `workbench.html` pages (excluding `jetski`) to get the actual IDE windows.
 
 ### Recent Projects / Workspace Storage
 - Antigravity stores workspace history in `<config>/Antigravity/User/workspaceStorage/`
 - Each subdirectory contains `workspace.json` with `{"folder": "file:///absolute/path"}`
 - Directory **mtime** indicates when the workspace was last active
-- Config root by OS: Linux → `~/.config`, macOS → `~/Library/Application Support`, Windows → `%APPDATA%`
+- Config root by OS: Linux 鈫?`~/.config`, macOS 鈫?`~/Library/Application Support`, Windows 鈫?`%APPDATA%`
 - Filter out `vscode-remote://` entries (remote SSH) and playground dirs
-- Use `path.resolve()` (not `path.join()`) when the user provides directory paths — `join(cwd, '/abs/path')` produces wrong results
+- Use `path.resolve()` (not `path.join()`) when the user provides directory paths 鈥?`join(cwd, '/abs/path')` produces wrong results
 
 ---
 
-## Turbopack / Next.js Standalone Build — Dead Code Elimination (Learned March 2026)
+## Turbopack / Next.js Standalone Build 鈥?Dead Code Elimination (Learned March 2026)
 
 ### The Problem
 Next.js's Turbopack (and Webpack) evaluates `process.platform` **at build time** during standalone builds. Any `if (process.platform === 'win32')` branches get statically resolved based on the **build machine's OS**, not the runtime OS. A standalone build done on Linux will strip the `win32` and `darwin` branches entirely, causing cross-platform failures.
 
 ### Affected Patterns
 ```typescript
-// ❌ BROKEN — Turbopack eliminates non-matching branches at build time
+// 鉂?BROKEN 鈥?Turbopack eliminates non-matching branches at build time
 if (process.platform === 'win32') { /* eliminated on Linux builds */ }
 const IS_WIN = process.platform === 'win32'; // always false on Linux builds
 ```
 
-### The Fix — String Concatenation
+### The Fix 鈥?String Concatenation
 Use string concatenation to access `process.platform` through a dynamic property key that the optimizer cannot statically resolve:
 ```typescript
-// ✅ SAFE — forces runtime resolution, optimizer can't fold this
+// 鉁?SAFE 鈥?forces runtime resolution, optimizer can't fold this
 const getRuntimePlatform = (): string => {
   const p = 'plat';
   const f = 'form';
@@ -251,7 +251,7 @@ const getRuntimePlatform = (): string => {
 
 For platform-specific data like config paths, use **resolver maps** with the dynamic key:
 ```typescript
-// ✅ SAFE — all branches survive because the key is runtime-resolved
+// 鉁?SAFE 鈥?all branches survive because the key is runtime-resolved
 const resolvers: Record<string, () => string> = {
   win32:  () => windowsPath(),
   darwin: () => macPath(),
@@ -262,7 +262,7 @@ const resolve = resolvers[getRuntimePlatform()] || resolvers.linux;
 
 For platform-specific pattern matching (like stripping `/` from Windows `file://` URIs), prefer **content-based detection** instead of platform checks:
 ```typescript
-// ✅ SAFE — detects Windows paths by their content, not by process.platform
+// 鉁?SAFE 鈥?detects Windows paths by their content, not by process.platform
 if (/^\/[A-Za-z]:/.test(fsPath)) fsPath = fsPath.substring(1);
 ```
 
@@ -278,17 +278,17 @@ if (/^\/[A-Za-z]:/.test(fsPath)) fsPath = fsPath.substring(1);
 ## Windows `schtasks` Path Quoting (Learned March 2026)
 
 ### The Problem
-When using `schtasks /Create ... /TR "..."` on Windows, paths containing spaces (e.g. `C:\Program Files\nodejs\node.exe`) must NOT use escaped double-quotes (`\"...\"`). The `schtasks` command parser does not handle nested escaped double-quotes — it splits on the first space after the opening `"` and treats the remainder as a separate, invalid argument.
+When using `schtasks /Create ... /TR "..."` on Windows, paths containing spaces (e.g. `C:\Program Files\nodejs\node.exe`) must NOT use escaped double-quotes (`\"...\"`). The `schtasks` command parser does not handle nested escaped double-quotes 鈥?it splits on the first space after the opening `"` and treats the remainder as a separate, invalid argument.
 
 **Error message:**
 ```
 ERROR: Invalid argument/option - 'Files\nodejs\node.exe ...'
 ```
 
-### The Fix — VBScript Hidden Launcher
+### The Fix 鈥?VBScript Hidden Launcher
 Running `node.exe` directly from `schtasks` opens a visible console window. The solution is a **VBScript wrapper** that launches Node invisibly:
 
-1. Write a `.vbs` file to `~/.antigravity-mobile-proxy/launcher.vbs`:
+1. Write a `.vbs` file to `~/.antigravity-touch/launcher.vbs`:
 ```vbs
 CreateObject("WScript.Shell").Run """C:\Program Files\nodejs\node.exe"" ""path\to\cli.js"" --args", 0, False
 ```
@@ -297,11 +297,11 @@ CreateObject("WScript.Shell").Run """C:\Program Files\nodejs\node.exe"" ""path\t
 
 2. Point `schtasks /TR` at `wscript.exe` running the VBS file:
 ```
-schtasks /Create /F /SC ONLOGON /TN "AntigravityProxy" /TR "wscript.exe 'path\to\launcher.vbs'" /RL HIGHEST
+schtasks /Create /F /SC ONLOGON /TN "AntigravityTouch" /TR "wscript.exe 'path\to\launcher.vbs'" /RL HIGHEST
 ```
 
 ### Previous Attempt (Broken)
-Escaped double-quotes (`\"path\"`) in `/TR` don't work — `schtasks` parser splits on spaces and treats the rest as invalid arguments:
+Escaped double-quotes (`\"path\"`) in `/TR` don't work 鈥?`schtasks` parser splits on spaces and treats the rest as invalid arguments:
 ```
 ERROR: Invalid argument/option - 'Files\nodejs\node.exe ...'
 ```
@@ -309,7 +309,7 @@ ERROR: Invalid argument/option - 'Files\nodejs\node.exe ...'
 ### Affected File
 | File | Location |
 |---|---|
-| `bin/cli.js` | `buildServiceConfig()` → `taskscheduler` branch |
+| `bin/cli.js` | `buildServiceConfig()` 鈫?`taskscheduler` branch |
 
 ---
 
@@ -330,4 +330,4 @@ When invoking clicks via CDP (`page.evaluate`), scoping strictly to a `[data-pro
 ### Next.js HMR vs Cached Production Bundles
 When testing server-side scraping logic updates (e.g., Route Handlers or `lib/` dependencies):
 - Running via `npm run dev` supports Hot Module Replacement (HMR) for most `lib/` files.
-- **However**, if the dev server was started via a globally installed CLI bin (e.g., `antigravity-mobile-proxy`), it runs the **compiled production `.next` cache**. In this state, touching source files will not apply changes. Diagnostic scripts running direct `puppeteer` evaluations are necessary to prove the logic works, after which the proxy must be fully rebuilt (`npm run build`) and restarted to serve the new logic.
+- **However**, if the dev server was started via a globally installed CLI bin (e.g., `antigravity-touch`), it runs the **compiled production `.next` cache**. In this state, touching source files will not apply changes. Diagnostic scripts running direct `puppeteer` evaluations are necessary to prove the logic works, after which the proxy must be fully rebuilt (`npm run build`) and restarted to serve the new logic.

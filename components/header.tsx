@@ -1,29 +1,38 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import type { WindowInfo, ConversationInfo } from '@/lib/types';
+import type { WindowInfo, ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 import type { CdpStatus, RecentProject } from '@/hooks/use-conversations';
 import ConversationSelector from './conversation-selector';
+
+type NewChatTarget = {
+  name?: string;
+  path?: string;
+  projectName?: string;
+  projectPath?: string;
+};
 
 interface HeaderProps {
   statusState: string;
   statusText: string;
   windows: WindowInfo[];
   conversations: ConversationInfo[];
+  conversationProjects: ConversationProjectGroup[];
   activeConversation: ConversationInfo | null;
+  isMonitorConnected: boolean;
   cdpStatus: CdpStatus;
   recentProjects: RecentProject[];
   onSelectWindow: (idx: number) => void;
-  onSelectConversation: (id: string) => void;
-  onNewChat: () => void;
+  onSelectConversation: (conversation: ConversationInfo) => void;
+  onNewChat: (project?: NewChatTarget) => void | Promise<void>;
   onStartCdp: (projectDir?: string, killExisting?: boolean) => Promise<any>;
   onOpenWindow: (projectDir: string) => Promise<any>;
   onCloseWindow: (index: number, targetId?: string) => Promise<any>;
 }
 
 export default function Header({
-  statusState, statusText, windows, conversations, activeConversation,
-  cdpStatus, recentProjects, onSelectWindow, onSelectConversation, onNewChat,
+  statusState, statusText, windows, conversations, conversationProjects, activeConversation,
+  isMonitorConnected, cdpStatus, recentProjects, onSelectWindow, onSelectConversation, onNewChat,
   onStartCdp, onOpenWindow, onCloseWindow,
 }: HeaderProps) {
   const [windowOpen, setWindowOpen] = useState(false);
@@ -124,15 +133,22 @@ export default function Header({
         </div>
         <div className="header-brand">
           <div className="header-title"><h1>Antigravity</h1></div>
-          <div className={`header-subtitle status-${statusState}`}>{statusText}</div>
+          <div className={`header-subtitle status-${statusState}`}>
+            <span>{statusText}</span>
+            <span className={`header-sync-pill ${isMonitorConnected ? 'live' : 'reconnecting'}`}>
+              {isMonitorConnected ? 'Live sync' : 'Syncing'}
+            </span>
+          </div>
         </div>
       </div>
       <div className="header-right">
         {/* Conversation Selector */}
         <ConversationSelector
           conversations={conversations}
+          projects={conversationProjects}
           activeConversation={activeConversation}
           onSelect={onSelectConversation}
+          onNewChat={onNewChat}
         />
 
         {/* Window Selector */}
@@ -157,7 +173,7 @@ export default function Header({
             <div className="wm-cdp-status">
               <div className="wm-cdp-info">
                 <span className={`wm-cdp-dot ${cdpStatus.active ? 'active' : 'inactive'}`} />
-                <span>{cdpStatus.active ? `CDP Active · ${cdpStatus.windowCount} window${cdpStatus.windowCount !== 1 ? 's' : ''}` : 'CDP Inactive'}</span>
+                <span>{cdpStatus.active ? `CDP Active - ${cdpStatus.windowCount} window${cdpStatus.windowCount !== 1 ? 's' : ''}` : 'CDP Inactive'}</span>
               </div>
               {!cdpStatus.active && (
                 <button
@@ -287,7 +303,7 @@ export default function Header({
         </div>
 
         {/* New Chat Button */}
-        <button className="icon-btn" onClick={onNewChat} title="New Chat" aria-label="New Chat">
+        <button className="icon-btn header-new-chat-btn" onClick={() => onNewChat()} title="New Chat" aria-label="New Chat">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />

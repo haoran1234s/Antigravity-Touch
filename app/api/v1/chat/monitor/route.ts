@@ -3,6 +3,7 @@ import { ensureCdpConnection } from '@/lib/init';
 import ctx from '@/lib/context';
 import { getFullAgentState } from '@/lib/scraper/agent-state';
 import { getAgentMode } from '@/lib/scraper/agent-mode';
+import { getActiveIdeConversation } from '@/lib/scraper/ide-conversations';
 import { diffStates } from '@/lib/sse/diff-states';
 import type { AgentState, ToolCall } from '@/lib/types';
 
@@ -79,6 +80,7 @@ export async function GET(request: NextRequest) {
         let prevMode = 'unknown';
         try { prevMode = await getAgentMode(ctx); } catch { /* ignore */ }
         let prevTurnCount = prevState.turnCount;
+        let prevConversation = await getActiveIdeConversation(ctx);
         let wasRunning = prevState.isRunning;
         let syncCounter = 0;
         const sessionToolCalls = new Map<string, ToolCall>();
@@ -96,6 +98,7 @@ export async function GET(request: NextRequest) {
           toolCallCount: prevState.toolCalls.length,
           responseCount: prevState.responses.length,
           hasError: !!prevState.error,
+          activeConversation: prevConversation,
         });
 
         // Poll every 800ms (lighter than the stream's 500ms since this is passive)
@@ -104,6 +107,25 @@ export async function GET(request: NextRequest) {
 
           try {
             const currState = await getFullAgentState(ctx);
+            const currConversation = await getActiveIdeConversation(ctx);
+
+            if (
+              currConversation &&
+              (
+                currConversation.id !== prevConversation?.id ||
+                currConversation.title !== prevConversation?.title ||
+                currConversation.url !== prevConversation?.url
+              )
+            ) {
+              ctx.activeConversationId = currConversation.id || ctx.activeConversationId;
+              ctx.activeTitle = currConversation.title;
+              ctx.activeConversationSource = 'ide';
+              writeEvent('conversation_change', {
+                previous: prevConversation,
+                current: currConversation,
+              });
+              prevConversation = currConversation;
+            }
 
             // ── New turn detection (someone typed from the IDE) ──
             if (currState.turnCount > prevTurnCount) {
@@ -170,6 +192,7 @@ export async function GET(request: NextRequest) {
                 toolCallCount: currState.toolCalls.length,
                 responseCount: currState.responses.length,
                 hasError: !!currState.error,
+                activeConversation: currConversation,
               });
             }
 

@@ -19,6 +19,7 @@ const ctx: ProxyContext = globalThis.__PROXY_CTX || {
   activeWindowIdx: 0,
   activeConversationId: null,
   activeTitle: null,
+  activeConversationSource: null,
   lastActionTimestamp: 0,
 };
 

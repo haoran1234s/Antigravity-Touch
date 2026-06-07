@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import ctx from '@/lib/context';
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 
 export const dynamic = 'force-dynamic';
 
-const BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+const runtimeHomedir = (): string => eval('require')('os').homedir();
+const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
 
 const MIME_TYPES: Record<string, string> = {
   '.md': 'text/markdown; charset=utf-8',
@@ -46,16 +46,16 @@ function toHumanReadableName(filename: string): string {
  */
 function findFileInBrain(fileName: string): string | null {
   try {
-    if (!fs.existsSync(BRAIN_DIR)) return null;
+    if (!fs.existsSync(getBrainDir())) return null;
     
-    const entries = fs.readdirSync(BRAIN_DIR, { withFileTypes: true });
+    const entries = fs.readdirSync(getBrainDir(), { withFileTypes: true });
     
     // Sort directories by modification time (newest first)
     const dirs = entries
       .filter(e => e.isDirectory() && !e.name.startsWith('.'))
       .map(e => ({
         name: e.name,
-        mtime: fs.statSync(path.join(BRAIN_DIR, e.name)).mtimeMs,
+        mtime: fs.statSync(path.join(getBrainDir(), e.name)).mtimeMs,
       }))
       .sort((a, b) => b.mtime - a.mtime);
 
@@ -86,14 +86,14 @@ function findFileInBrain(fileName: string): string | null {
 
     // If we have a preferred conversation ID, check it first
     if (ctx.activeConversationId) {
-      const preferred = path.join(BRAIN_DIR, ctx.activeConversationId);
+      const preferred = path.join(getBrainDir(), ctx.activeConversationId);
       const match = searchDir(preferred);
       if (match) return match;
     }
 
     // Otherwise search all directories
     for (const dir of dirs) {
-      const dirPath = path.join(BRAIN_DIR, dir.name);
+      const dirPath = path.join(getBrainDir(), dir.name);
       const match = searchDir(dirPath);
       if (match) return match;
     }
@@ -127,9 +127,9 @@ export async function GET(
     return NextResponse.json({ error: 'File not found' }, { status: 404 });
   }
 
-  // Security: ensure resolved path is within BRAIN_DIR
+  // Security: ensure resolved path is within getBrainDir()
   const resolved = path.resolve(filePath);
-  if (!resolved.startsWith(path.resolve(BRAIN_DIR))) {
+  if (!resolved.startsWith(path.resolve(getBrainDir()))) {
     return NextResponse.json({ error: 'Invalid path' }, { status: 403 });
   }
 

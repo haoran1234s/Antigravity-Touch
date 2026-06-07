@@ -1,12 +1,12 @@
-# Contributing to Antigravity Mobile Proxy
+﻿# Contributing to Antigravity Touch
 
-Thanks for your interest in contributing! 🎉 This project welcomes contributions of all kinds — bug reports, feature ideas, documentation improvements, and code.
+Thanks for your interest in contributing! 馃帀 This project welcomes contributions of all kinds 鈥?bug reports, feature ideas, documentation improvements, and code.
 
 ## Getting Started
 
 ### Prerequisites
 
-- **Node.js 18+** — [Download here](https://nodejs.org)
+- **Node.js 18+** 鈥?[Download here](https://nodejs.org)
 - **Antigravity IDE** installed on your system
 - **Git**
 
@@ -14,8 +14,8 @@ Thanks for your interest in contributing! 🎉 This project welcomes contributio
 
 ```bash
 # Clone the repo
-git clone https://github.com/Belal33/antigravity-mobile-proxy.git
-cd antigravity-mobile-proxy
+git clone https://github.com/Belal33/antigravity-touch.git
+cd antigravity-touch
 
 # Install dependencies
 npm install
@@ -39,9 +39,9 @@ The dev server runs at `http://localhost:5555`.
 
 ### Reporting Bugs
 
-1. Check if the issue already exists in [GitHub Issues](https://github.com/Belal33/antigravity-mobile-proxy/issues)
+1. Check if the issue already exists in [GitHub Issues](https://github.com/Belal33/antigravity-touch/issues)
 2. If not, open a new issue using the **Bug Report** template
-3. Include as much detail as possible — OS, Node.js version, error messages, and steps to reproduce
+3. Include as much detail as possible 鈥?OS, Node.js version, error messages, and steps to reproduce
 
 ### Suggesting Features
 
@@ -71,27 +71,27 @@ The dev server runs at `http://localhost:5555`.
 
 We follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-- `feat:` — New feature
-- `fix:` — Bug fix
-- `docs:` — Documentation changes
-- `refactor:` — Code refactoring
-- `chore:` — Maintenance tasks
+- `feat:` 鈥?New feature
+- `fix:` 鈥?Bug fix
+- `docs:` 鈥?Documentation changes
+- `refactor:` 鈥?Code refactoring
+- `chore:` 鈥?Maintenance tasks
 
 ## Project Structure
 
 ```
-antigravity-mobile-proxy/
-├── app/                    # Next.js App Router (pages + API routes)
-│   └── api/v1/             # Versioned API endpoints
-├── components/             # React UI components
-├── hooks/                  # React hooks
-├── lib/                    # Server-side services
-│   ├── cdp/                # Chrome DevTools Protocol
-│   ├── scraper/            # Agent state DOM scraper
-│   ├── actions/            # IDE automation
-│   └── sse/                # Real-time event streaming
-├── bin/cli.js              # CLI entry point
-└── public/                 # Static assets
+antigravity-touch/
+鈹溾攢鈹€ app/                    # Next.js App Router (pages + API routes)
+鈹?  鈹斺攢鈹€ api/v1/             # Versioned API endpoints
+鈹溾攢鈹€ components/             # React UI components
+鈹溾攢鈹€ hooks/                  # React hooks
+鈹溾攢鈹€ lib/                    # Server-side services
+鈹?  鈹溾攢鈹€ cdp/                # Chrome DevTools Protocol
+鈹?  鈹溾攢鈹€ scraper/            # Agent state DOM scraper
+鈹?  鈹溾攢鈹€ actions/            # IDE automation
+鈹?  鈹斺攢鈹€ sse/                # Real-time event streaming
+鈹溾攢鈹€ bin/cli.js              # CLI entry point
+鈹斺攢鈹€ public/                 # Static assets
 ```
 
 ## Code Style
@@ -99,8 +99,8 @@ antigravity-mobile-proxy/
 - **TypeScript** for all source files
 - **ESLint** with Next.js config
 - Keep components focused and files under ~300 lines
-- Use meaningful variable names — no abbreviations
+- Use meaningful variable names 鈥?no abbreviations
 
 ## Questions?
 
-Open a [Discussion](https://github.com/Belal33/antigravity-mobile-proxy/discussions) or reach out in the issues. We're happy to help!
+Open a [Discussion](https://github.com/Belal33/antigravity-touch/discussions) or reach out in the issues. We're happy to help!

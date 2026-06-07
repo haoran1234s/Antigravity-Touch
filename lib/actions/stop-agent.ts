@@ -8,11 +8,12 @@
  */
 
 import type { ProxyContext } from '../types';
+import { SELECTORS } from '../cdp/selectors';
 
 export async function stopAgent(ctx: ProxyContext): Promise<{ success: boolean; clicked?: string; error?: string }> {
   if (!ctx.workbenchPage) return { success: false, error: 'Not connected' };
 
-  return ctx.workbenchPage.evaluate(() => {
+  return ctx.workbenchPage.evaluate((chatInputSel: string) => {
     // ── Strategy 1: data-tooltip-id="*cancel*" div (primary IDE control) ──
     const cancelDiv = document.querySelector<HTMLElement>(
       '[data-tooltip-id*="cancel"]'
@@ -79,7 +80,7 @@ export async function stopAgent(ctx: ProxyContext): Promise<{ success: boolean; 
     // ── Strategy 4: Keyboard shortcut Escape (last resort) ──
     // Antigravity may respond to Escape to cancel running agent.
     const inputEl = document.querySelector<HTMLElement>(
-      '#antigravity\\.agentSidePanelInputBox [contenteditable="true"][role="textbox"]'
+      chatInputSel
     );
     if (inputEl) {
       inputEl.dispatchEvent(new KeyboardEvent('keydown', {
@@ -89,5 +90,5 @@ export async function stopAgent(ctx: ProxyContext): Promise<{ success: boolean; 
     }
 
     return { success: false, error: 'No stop control found in IDE' };
-  });
+  }, SELECTORS.chatInput);
 }

@@ -1,13 +1,24 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ConversationInfo } from '@/lib/types';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import type { ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 
 interface ConversationSelectorProps {
   conversations: ConversationInfo[];
+  projects?: ConversationProjectGroup[];
   activeConversation: ConversationInfo | null;
-  onSelect: (title: string) => void;
+  onSelect: (conversation: ConversationInfo) => void;
+  onNewChat?: (project?: { name: string; path?: string }) => void | Promise<void>;
 }
+
+type ProjectView = {
+  id: string;
+  name: string;
+  path?: string;
+  active: boolean;
+  conversationCount: number;
+  conversations: ConversationInfo[];
+};
 
 function formatRelativeTime(dateStr?: string) {
   if (!dateStr) return '';
@@ -24,14 +35,136 @@ function formatRelativeTime(dateStr?: string) {
   return `${weeks} wk${weeks !== 1 ? 's' : ''} ago`;
 }
 
-export default function ConversationSelector({ conversations, activeConversation, onSelect }: ConversationSelectorProps) {
+function getConversationKey(conversation: ConversationInfo, fallbackIndex: number) {
+  return `${conversation.id || 'conv'}-${conversation.index}-${conversation.title || 'untitled'}-${fallbackIndex}`;
+}
+
+function getDisplayTitle(conversation: ConversationInfo) {
+  if (conversation.title) return conversation.title;
+  if (conversation.id) return `${conversation.id.substring(0, 20)}...`;
+  return 'Untitled conversation';
+}
+
+function isSameConversation(a: ConversationInfo | null, b: ConversationInfo) {
+  if (!a) return false;
+  if (a.id && b.id && a.id === b.id) return true;
+  return a.index === b.index && a.title === b.title;
+}
+
+function getConversationMeta(conversation: ConversationInfo) {
+  const fileText = conversation.files?.length
+    ? ` - ${conversation.files.length} artifact${conversation.files.length !== 1 ? 's' : ''}`
+    : '';
+  if (conversation.source === 'brain') return `Project history${fileText}`;
+  if (conversation.index === -1) return `Open in IDE${fileText}`;
+  return `Conversation #${conversation.index + 1}${fileText}`;
+}
+
+function normalize(value?: string | null) {
+  return (value || '').toLowerCase().trim();
+}
+
+function matchesConversation(conversation: ConversationInfo, query: string) {
+  const haystack = [
+    getDisplayTitle(conversation),
+    conversation.id,
+    conversation.summary,
+    conversation.projectName,
+    conversation.projectPath,
+    ...(conversation.workspacePaths || []),
+  ].map(normalize).filter(Boolean);
+  return haystack.some(value => value.includes(query));
+}
+
+function projectNameForConversation(conversation: ConversationInfo) {
+  return conversation.projectName || conversation.workspacePaths?.[0] || 'Current project';
+}
+
+function sortConversations(items: ConversationInfo[]) {
+  return [...items].sort((a, b) => {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    if (!a.mtime && !b.mtime) return a.index - b.index;
+    if (!a.mtime) return 1;
+    if (!b.mtime) return -1;
+    return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
+  });
+}
+
+function dedupeConversations(items: ConversationInfo[]) {
+  const seen = new Set<string>();
+  const deduped: ConversationInfo[] = [];
+  for (const conversation of items) {
+    const key = conversation.id && !/^-?\d+$/.test(conversation.id)
+      ? `id:${conversation.id}`
+      : `idx:${conversation.index}:${conversation.title}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(conversation);
+  }
+  return sortConversations(deduped);
+}
+
+function buildFallbackProjects(conversations: ConversationInfo[], current: ConversationInfo | null): ProjectView[] {
+  const groups = new Map<string, ProjectView>();
+  const ensure = (name: string, path?: string, active = false) => {
+    const id = path || name;
+    const existing = groups.get(id);
+    if (existing) {
+      existing.active = existing.active || active;
+      return existing;
+    }
+    const group: ProjectView = { id, name, path, active, conversationCount: 0, conversations: [] };
+    groups.set(id, group);
+    return group;
+  };
+
+  for (const conversation of conversations) {
+    const isCurrent = isSameConversation(current, conversation) || conversation.active;
+    const group = ensure(
+      projectNameForConversation(conversation),
+      conversation.projectPath,
+      isCurrent,
+    );
+    group.conversations.push(conversation);
+  }
+
+  return Array.from(groups.values()).map(group => {
+    const groupedConversations = dedupeConversations(group.conversations);
+    return { ...group, conversationCount: groupedConversations.length, conversations: groupedConversations };
+  });
+}
+
+export default function ConversationSelector({
+  conversations,
+  projects = [],
+  activeConversation,
+  onSelect,
+  onNewChat,
+}: ConversationSelectorProps) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [query, setQuery] = useState('');
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const current = activeConversation || conversations.find(c => c.active) || projects.flatMap(p => p.conversations).find(c => c.active) || null;
 
   const closeDropdown = useCallback(() => {
     setOpen(false);
     setShowAll(false);
+    setQuery('');
+  }, [setOpen, setShowAll, setQuery]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const syncLayout = () => setIsMobileLayout(mediaQuery.matches);
+    syncLayout();
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', syncLayout);
+      return () => mediaQuery.removeEventListener('change', syncLayout);
+    }
+    mediaQuery.addListener(syncLayout);
+    return () => mediaQuery.removeListener(syncLayout);
   }, []);
 
   useEffect(() => {
@@ -44,119 +177,242 @@ export default function ConversationSelector({ conversations, activeConversation
     return () => document.removeEventListener('mousedown', handler);
   }, [closeDropdown]);
 
-  // ── Partition conversations into sections ──
-  // 1. "Current" — the active conversation (especially index === -1 synthetic ones)
-  // 2. "Recent"  — the rest, sorted by mtime desc
-  const current = conversations.find(c => c.active) || null;
-  const others = conversations.filter(c => !c.active);
+  useEffect(() => {
+    if (!open) return;
 
-  // Sort others by mtime descending
-  const sorted = [...others].sort((a, b) => {
-    if (!a.mtime && !b.mtime) return 0;
-    if (!a.mtime) return 1;
-    if (!b.mtime) return -1;
-    return new Date(b.mtime).getTime() - new Date(a.mtime).getTime();
-  });
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeDropdown();
+    };
 
-  const SHOW_LIMIT = 5;
-  const visible = showAll ? sorted : sorted.slice(0, SHOW_LIMIT);
-  const hiddenCount = sorted.length - SHOW_LIMIT;
+    document.addEventListener('keydown', handler);
+    return () => {
+      document.removeEventListener('keydown', handler);
+    };
+  }, [open, closeDropdown]);
+
+  const groupedProjects = useMemo<ProjectView[]>(() => {
+    const sourceProjects = projects.length > 0
+      ? projects.map((project) => ({
+          ...project,
+          conversationCount: project.conversationCount || project.conversations.length,
+          conversations: dedupeConversations(project.conversations),
+        }))
+      : buildFallbackProjects(conversations, current);
+
+    return [...sourceProjects]
+      .filter(project => project.active || project.conversations.length > 0)
+      .sort((a, b) => {
+        if (a.active !== b.active) return a.active ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+  }, [conversations, current, projects]);
+
+  const filteredProjects = useMemo<ProjectView[]>(() => {
+    const normalized = normalize(query);
+    if (!normalized) return groupedProjects;
+
+    return groupedProjects
+      .map(project => {
+        const projectMatches = [project.name, project.path].map(normalize).some(value => value.includes(normalized));
+        const filteredConversations = projectMatches
+          ? project.conversations
+          : project.conversations.filter(conversation => matchesConversation(conversation, normalized));
+        return {
+          ...project,
+          conversations: filteredConversations,
+          conversationCount: filteredConversations.length,
+        };
+      })
+      .filter(project => project.conversations.length > 0);
+  }, [groupedProjects, query]);
+
+  const SHOW_LIMIT = 8;
+  const shouldShowAll = isMobileLayout || showAll || query.trim().length > 0;
+  const visibleProjects = useMemo<ProjectView[]>(() => {
+    if (shouldShowAll) return filteredProjects;
+
+    let remaining = SHOW_LIMIT;
+    const visible: ProjectView[] = [];
+    for (const project of filteredProjects) {
+      if (remaining <= 0) break;
+      const visibleConversations = project.conversations.slice(0, remaining);
+      if (visibleConversations.length === 0) continue;
+      visible.push({
+        ...project,
+        conversations: visibleConversations,
+        conversationCount: project.conversationCount,
+      });
+      remaining -= visibleConversations.length;
+    }
+    return visible;
+  }, [filteredProjects, shouldShowAll]);
+
+  const totalCount = groupedProjects.reduce((sum, project) => sum + project.conversations.length, 0) || conversations.length;
+  const filteredCount = filteredProjects.reduce((sum, project) => sum + project.conversations.length, 0);
+  const visibleCount = visibleProjects.reduce((sum, project) => sum + project.conversations.length, 0);
+  const hiddenCount = shouldShowAll ? 0 : Math.max(filteredCount - visibleCount, 0);
+  const activeProject = groupedProjects.find(project => project.active);
+
+  const handleSelect = (conversation: ConversationInfo) => {
+    if (conversation.active || isSameConversation(current, conversation)) {
+      closeDropdown();
+      return;
+    }
+    onSelect(conversation);
+    closeDropdown();
+  };
+
+  const handleNewChat = async (project?: ProjectView) => {
+    closeDropdown();
+    await onNewChat?.(project ? { name: project.name, path: project.path } : undefined);
+  };
 
   return (
     <div ref={wrapperRef} className={`conv-selector-wrapper ${open ? 'open' : ''}`}>
-      <button className="conv-selector-btn" onClick={() => setOpen(!open)} title="Switch conversation">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <button
+        className="conv-selector-btn"
+        onClick={() => setOpen(!open)}
+        title="Switch project or conversation"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
-        <span>{activeConversation?.title?.substring(0, 22) || 'Select a conversation'}</span>
-        <svg className="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+        <span className="conv-selector-title">{current?.title?.substring(0, 28) || 'Projects'}</span>
+        {totalCount > 1 && <span className="conv-selector-count" aria-label={`${totalCount} conversations`}>{totalCount}</span>}
+        <svg className="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
 
-      <div className={`conv-dropdown ${open ? 'open' : ''}`}>
-        <div className="conv-dropdown-header">Select a conversation</div>
+      <div className={`conv-mobile-backdrop ${open ? 'open' : ''}`} onClick={closeDropdown} aria-hidden="true" />
+
+      <div className={`conv-dropdown ${open ? 'open' : ''}`} role="dialog" aria-modal={isMobileLayout ? true : undefined} aria-label="Project and conversation manager">
+        <div className="conv-dropdown-header">
+          <div className="conv-dropdown-title-group">
+            <div className="conv-dropdown-title-row">
+              <span className="conv-dropdown-title">Projects</span>
+              {totalCount > 0 && <span className="conv-dropdown-count">{totalCount}</span>}
+            </div>
+            <span className="conv-dropdown-subtitle">Browse projects and open saved conversations without starting a new chat</span>
+          </div>
+          <button className="conv-mobile-close" onClick={closeDropdown} aria-label="Close project manager">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="conv-mobile-tools">
+          <label className="conv-search" htmlFor="conversation-search">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              id="conversation-search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search projects or conversations"
+              autoComplete="off"
+            />
+          </label>
+          {onNewChat && (
+            <button
+              className="conv-new-chat-btn"
+              onClick={() => handleNewChat(activeProject)}
+              title={activeProject ? `New chat in ${activeProject.name}` : 'New chat'}
+              aria-label={activeProject ? `New chat in ${activeProject.name}` : 'New chat'}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              {activeProject ? 'New in current' : 'New chat'}
+            </button>
+          )}
+        </div>
+
         <div className="conv-dropdown-list">
-
-          {/* ── Current Section ── */}
-          {current && (
-            <div className="conv-section">
-              <div className="conv-section-label">Current</div>
-              <button
-                className="conv-item active"
-                onClick={() => {
-                  // Only allow switching if this conversation exists in the IDE (index !== -1)
-                  if (current.index !== -1) {
-                    onSelect(current.title);
-                  }
-                  closeDropdown();
-                }}
-              >
-                <div className="conv-item-header">
-                  <span className="conv-item-title">{current.title || 'Untitled'}</span>
-                  {current.mtime && (
-                    <span className="conv-item-time">{formatRelativeTime(current.mtime)}</span>
+          {visibleProjects.map((project) => (
+            <div key={project.id} className={`conv-project-section ${project.active ? 'active' : ''}`}>
+              <div className="conv-project-header">
+                <div className="conv-project-title-line">
+                  <svg className="conv-project-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
+                  <span className="conv-project-name">{project.name}</span>
+                  <span className="conv-project-count">{project.conversationCount}</span>
+                  {onNewChat && (
+                    <button
+                      className="conv-project-new-btn"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleNewChat(project);
+                      }}
+                      title={`New chat in ${project.name}`}
+                      aria-label={`New chat in ${project.name}`}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      <span>New</span>
+                    </button>
                   )}
-                  {/* Trash icon placeholder — matches IDE style */}
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    className="conv-item-action"
-                    title="Current conversation"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.stopPropagation(); }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-1 14H6L5 6" />
-                      <path d="M10 11v6M14 11v6" />
-                      <path d="M9 6V4h6v2" />
-                    </svg>
-                  </span>
                 </div>
-              </button>
-            </div>
-          )}
-
-          {/* ── Recent Conversations Section ── */}
-          {visible.length > 0 && (
-            <div className="conv-section">
-              <div className="conv-section-label">
-                Recent{sorted.length > 0 && <span className="conv-section-count">{sorted.length}</span>}
+                {project.path && <div className="conv-project-path">{project.path}</div>}
               </div>
-              {visible.map((c, i) => {
-                const displayTitle = c.title || c.id.substring(0, 20) + '…';
-                return (
-                  <button
-                    key={`conv-${i}`}
-                    className="conv-item"
-                    onClick={() => {
-                      onSelect(c.title);
-                      closeDropdown();
-                    }}
-                  >
-                    <div className="conv-item-header">
-                      {c.active && <span className="conv-item-dot active" />}
-                      <span className="conv-item-title">{displayTitle}</span>
-                      {c.mtime && (
-                        <span className="conv-item-time">{formatRelativeTime(c.mtime)}</span>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-              {!showAll && hiddenCount > 0 && (
-                <button
-                  className="conv-show-more"
-                  onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
-                >
-                  Show {hiddenCount} more…
-                </button>
-              )}
+
+              <div className="conv-project-conversations">
+                {project.conversations.map((conversation, i) => {
+                  const isCurrent = conversation.active || isSameConversation(current, conversation);
+                  return (
+                    <button
+                      key={getConversationKey(conversation, i)}
+                      className={`conv-item ${isCurrent ? 'active' : ''}`}
+                      onClick={() => handleSelect(conversation)}
+                      aria-current={isCurrent ? 'true' : undefined}
+                    >
+                      <div className="conv-item-header">
+                        <span className={`conv-item-dot ${isCurrent ? 'active' : ''}`} />
+                        <span className="conv-item-title">{getDisplayTitle(conversation)}</span>
+                        {conversation.mtime && <span className="conv-item-time">{formatRelativeTime(conversation.mtime)}</span>}
+                        {isCurrent && (
+                          <span className="conv-item-action" title="Current conversation" aria-hidden="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M20 6 9 17l-5-5" />
+                            </svg>
+                          </span>
+                        )}
+                      </div>
+                      <span className="conv-item-subtitle">
+                        {getConversationMeta(conversation)}
+                      </span>
+                      {conversation.summary && <span className="conv-item-preview">{conversation.summary}</span>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+          ))}
+
+          {hiddenCount > 0 && (
+            <button
+              className="conv-show-more"
+              onClick={(e) => { e.stopPropagation(); setShowAll(true); }}
+            >
+              Show {hiddenCount} more...
+            </button>
           )}
 
-          {conversations.length === 0 && (
+          {filteredProjects.length === 0 && query.trim().length > 0 && (
+            <div className="conv-dropdown-empty">No projects or conversations match your search</div>
+          )}
+
+          {groupedProjects.length === 0 && (
             <div className="conv-dropdown-empty">No conversations found</div>
           )}
         </div>

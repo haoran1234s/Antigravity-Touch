@@ -1,6 +1,6 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import useSWR from 'swr';
-import type { WindowInfo, ConversationInfo } from '@/lib/types';
+import type { WindowInfo, ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 import { fetcher, SWR_KEYS } from '@/lib/swr-fetcher';
 
 export interface CdpStatus {
@@ -16,6 +16,58 @@ export interface RecentProject {
 }
 
 const API_BASE = '/api/v1';
+const SELECTED_CONVERSATION_KEY = 'antigravity-mobile:selected-conversation:v1';
+
+type ConversationSelection = string | Partial<Pick<ConversationInfo, 'title' | 'index' | 'id' | 'projectName' | 'projectPath'>>;
+
+function getSelectionParts(selection: ConversationSelection) {
+  return {
+    title: typeof selection === 'string' ? selection : selection.title,
+    index: typeof selection === 'string' ? undefined : selection.index,
+    id: typeof selection === 'string' ? undefined : selection.id,
+    projectName: typeof selection === 'string' ? undefined : selection.projectName,
+    projectPath: typeof selection === 'string' ? undefined : selection.projectPath,
+  };
+}
+
+function isSameSelection(conversation: ConversationInfo, selection: { title?: string; index?: number; id?: string; projectName?: string; projectPath?: string }) {
+  if (selection.id && conversation.id === selection.id) return true;
+  const sameProject =
+    !selection.projectName ||
+    !conversation.projectName ||
+    conversation.projectName === selection.projectName;
+  if (Number.isInteger(selection.index) && (selection.index as number) >= 0 && conversation.index === selection.index && sameProject) return true;
+  return !!selection.title && conversation.title === selection.title && sameProject;
+}
+
+function persistSelectedConversation(selection: { title?: string; index?: number; id?: string; projectName?: string; projectPath?: string }) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(SELECTED_CONVERSATION_KEY, JSON.stringify({
+      ...selection,
+      savedAt: Date.now(),
+    }));
+  } catch { /* ignore storage failures */ }
+}
+
+function readPersistedSelection(): { title?: string; index?: number; id?: string; projectName?: string; projectPath?: string } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(SELECTED_CONVERSATION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || (!parsed.title && !parsed.id && !Number.isInteger(parsed.index))) return null;
+    return {
+      title: typeof parsed.title === 'string' ? parsed.title : undefined,
+      index: Number.isInteger(parsed.index) ? parsed.index : undefined,
+      id: typeof parsed.id === 'string' ? parsed.id : undefined,
+      projectName: typeof parsed.projectName === 'string' ? parsed.projectName : undefined,
+      projectPath: typeof parsed.projectPath === 'string' ? parsed.projectPath : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function useConversations(
   fetchHistory: () => void,
@@ -37,11 +89,25 @@ export function useConversations(
     error: cdpData?.error ?? null,
   };
 
-  const { data: convsData, mutate: mutateConversations } = useSWR<{ conversations?: ConversationInfo[] }>(
+  const { data: convsData, mutate: mutateConversations } = useSWR<{ conversations?: ConversationInfo[]; projects?: ConversationProjectGroup[] }>(
     SWR_KEYS.conversations, fetcher, { revalidateOnFocus: true }
   );
-  const conversations: ConversationInfo[] = convsData?.conversations || [];
-  const activeConversation: ConversationInfo | null = conversations.find((c) => c.active) || null;
+  const conversations: ConversationInfo[] = useMemo(
+    () => convsData?.conversations || [],
+    [convsData?.conversations],
+  );
+  const conversationProjects: ConversationProjectGroup[] = useMemo(
+    () => convsData?.projects || [],
+    [convsData?.projects],
+  );
+  const activeConversation: ConversationInfo | null = useMemo(() => {
+    return (
+      conversations.find((c) => c.active) ||
+      conversationProjects.flatMap(project => project.conversations).find((c) => c.active) ||
+      null
+    );
+  }, [conversations, conversationProjects]);
+  const didRestoreSelectionRef = useRef(false);
 
   const { data: recentData, mutate: mutateRecentProjects } = useSWR<{ recentProjects?: RecentProject[] }>(
     SWR_KEYS.recentProjects, fetcher, { revalidateOnFocus: true }
@@ -130,16 +196,56 @@ export function useConversations(
     } catch { /* ignore */ }
   }, [mutateWindows, fetchHistory, setShowWelcome, mutateConversations, onConversationSwitched]);
 
-  const selectConversation = useCallback(async (title: string) => {
+  const selectConversation = useCallback(async (selection: ConversationSelection) => {
+    const { title, index, id, projectName, projectPath } = getSelectionParts(selection);
+    const hasUsableIndex = Number.isInteger(index) && (index as number) >= 0;
+    if (!title && !hasUsableIndex && !id) return;
+
+    const target = { title, index: hasUsableIndex ? index : undefined, id, projectName, projectPath };
+
     try {
       const res = await fetch(`${API_BASE}/conversations/select`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({
+          title,
+          id,
+          projectName,
+          projectPath,
+          index: hasUsableIndex ? index : undefined,
+        }),
       });
       const data = await res.json();
       if (data.success) {
+        persistSelectedConversation({ ...target, id: data.activeConversationId || target.id });
         setShowWelcome(false);
+        mutateConversations((current) => current ? {
+          ...current,
+          conversations: (current.conversations || []).map((conversation) => ({
+            ...conversation,
+            active: isSameSelection(conversation, { ...target, id: data.activeConversationId || target.id }),
+          })),
+          projects: (current.projects || []).map((project) => ({
+            ...project,
+            conversations: project.conversations.map((conversation) => ({
+              ...conversation,
+              active: isSameSelection(conversation, { ...target, id: data.activeConversationId || target.id }),
+            })),
+          })),
+        } : current, { revalidate: false });
+
+        const canResolveImmediately =
+          data.source === 'brain' ||
+          data.activeConversationId ||
+          !hasUsableIndex;
+
+        if (canResolveImmediately) {
+          mutateConversations();
+          fetchHistory();
+          onConversationSwitched?.();
+          return;
+        }
+
         let attempts = 0;
         const poll = async () => {
           attempts++;
@@ -149,9 +255,9 @@ export function useConversations(
             const dList = await resList.json();
             const convs = dList.conversations || [];
             const active = convs.find((c: any) => c.active);
-            if ((active && active.title === title) || attempts > 10) {
+            if ((active && isSameSelection(active, { ...target, id: data.activeConversationId || target.id })) || attempts > 10) {
               // Update the SWR cache with this fresh data
-              mutateConversations({ conversations: convs }, { revalidate: false });
+              mutateConversations(dList, { revalidate: false });
               fetchHistory();
               // Notify parent that the switch is complete (for artifact sync)
               onConversationSwitched?.();
@@ -165,6 +271,27 @@ export function useConversations(
     } catch { /* ignore */ }
   }, [fetchHistory, setShowWelcome, mutateConversations, onConversationSwitched]);
 
+  useEffect(() => {
+    if (didRestoreSelectionRef.current) return;
+    if (!convsData) return;
+
+    const persisted = readPersistedSelection();
+    didRestoreSelectionRef.current = true;
+    if (!persisted) return;
+
+    const allConversations = [
+      ...conversations,
+      ...conversationProjects.flatMap(project => project.conversations),
+    ];
+    const restored = allConversations.find((conversation) => isSameSelection(conversation, persisted));
+
+    if (restored?.active || (activeConversation && isSameSelection(activeConversation, persisted))) {
+      return;
+    }
+
+    selectConversation(restored || persisted);
+  }, [activeConversation, conversationProjects, conversations, convsData, selectConversation]);
+
   // ── Expose imperative refresh functions (backwards-compatible names) ──
   const loadWindows = mutateWindows;
   const loadConversations = mutateConversations;
@@ -174,6 +301,7 @@ export function useConversations(
   return {
     windows,
     conversations,
+    conversationProjects,
     activeConversation,
     cdpStatus,
     recentProjects,

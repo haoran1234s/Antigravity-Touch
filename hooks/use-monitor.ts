@@ -22,6 +22,8 @@ interface UseMonitorOptions {
   onModeChange?: (data: { prevMode: string; newMode: string }) => void;
   /** Called when a periodic sync arrives */
   onSync?: (data: Record<string, unknown>) => void;
+  /** Called when the active desktop conversation changes */
+  onConversationChange?: (data: { previous?: Record<string, unknown> | null; current?: Record<string, unknown> | null }) => void;
   /** Whether to auto-connect on mount. Default: true */
   autoConnect?: boolean;
 }
@@ -42,6 +44,7 @@ export function useMonitor(options: UseMonitorOptions = {}) {
     onTurnChange,
     onModeChange,
     onSync,
+    onConversationChange,
     autoConnect = true,
   } = options;
 
@@ -58,6 +61,7 @@ export function useMonitor(options: UseMonitorOptions = {}) {
   const onTurnChangeRef = useRef(onTurnChange);
   const onModeChangeRef = useRef(onModeChange);
   const onSyncRef = useRef(onSync);
+  const onConversationChangeRef = useRef(onConversationChange);
 
   onEventRef.current = onEvent;
   onActivityStartRef.current = onActivityStart;
@@ -65,6 +69,7 @@ export function useMonitor(options: UseMonitorOptions = {}) {
   onTurnChangeRef.current = onTurnChange;
   onModeChangeRef.current = onModeChange;
   onSyncRef.current = onSync;
+  onConversationChangeRef.current = onConversationChange;
 
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -144,6 +149,9 @@ export function useMonitor(options: UseMonitorOptions = {}) {
               case 'sync':
                 setLastSyncTime(Date.now());
                 onSyncRef.current?.(data);
+                break;
+              case 'conversation_change':
+                onConversationChangeRef.current?.(data as any);
                 break;
             }
           } catch {

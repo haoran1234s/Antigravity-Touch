@@ -1,19 +1,19 @@
 <div align="center">
 
-# 🚀 Antigravity Mobile Proxy
+# 🚀 Antigravity Touch
 
 **Chat with the Antigravity AI Agent from your phone, tablet, or any browser**
 
 Control your [Antigravity IDE](https://github.com/anthropics/antigravity) remotely — ask questions, run commands, edit files, and approve actions — all from a beautiful mobile-friendly chat interface with a secure tunnel to your machine.
 
-[![npm version](https://img.shields.io/npm/v/antigravity-mobile-proxy?color=CB3837&logo=npm)](https://www.npmjs.com/package/antigravity-mobile-proxy)
-[![npm downloads](https://img.shields.io/npm/dm/antigravity-mobile-proxy?color=blue&logo=npm)](https://www.npmjs.com/package/antigravity-mobile-proxy)
-[![CI](https://github.com/Belal33/antigravity-mobile-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Belal33/antigravity-mobile-proxy/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/antigravity-touch?color=CB3837&logo=npm)](https://www.npmjs.com/package/antigravity-touch)
+[![npm downloads](https://img.shields.io/npm/dm/antigravity-touch?color=blue&logo=npm)](https://www.npmjs.com/package/antigravity-touch)
+[![CI](https://github.com/Belal33/antigravity-touch/actions/workflows/ci.yml/badge.svg)](https://github.com/Belal33/antigravity-touch/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-≥18-339933?logo=node.js)](https://nodejs.org)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/Belal33/antigravity-mobile-proxy?style=social)](https://github.com/Belal33/antigravity-mobile-proxy)
+[![GitHub stars](https://img.shields.io/github/stars/Belal33/antigravity-touch?style=social)](https://github.com/Belal33/antigravity-touch)
 
-<img src="https://raw.githubusercontent.com/Belal33/antigravity-mobile-proxy/main/public/demo.gif" alt="Antigravity Mobile Proxy Demo" width="300" />
+<img src="https://raw.githubusercontent.com/Belal33/antigravity-touch/main/public/demo.gif" alt="Antigravity Touch Demo" width="300" />
 
 </div>
 
@@ -23,7 +23,7 @@ Control your [Antigravity IDE](https://github.com/anthropics/antigravity) remote
 
 Antigravity is an AI coding agent that lives inside your IDE. Normally, you can only interact with it from the IDE window on your computer.
 
-**Antigravity Mobile Proxy** lets you chat with that same agent from **any device** — your phone, your tablet, another computer — through a web browser. It creates a secure link (tunnel) so you can:
+**Antigravity Touch** lets you chat with that same agent from **any device** — your phone, your tablet, another computer — through a web browser. It creates a secure link (tunnel) so you can:
 
 - 💬 **Send messages** to the AI agent from anywhere
 - 👀 **See everything** the agent does in real-time — file edits, terminal commands, search results
@@ -39,7 +39,7 @@ Antigravity is an AI coding agent that lives inside your IDE. Normally, you can 
 ### Option 1: Run directly with npx (no install needed)
 
 ```bash
-npx antigravity-mobile-proxy@latest
+npx antigravity-touch@latest
 ```
 
 This downloads and runs the latest version every time — no global install required.
@@ -47,13 +47,13 @@ This downloads and runs the latest version every time — no global install requ
 ### Option 2: Install globally via npm
 
 ```bash
-npm install -g antigravity-mobile-proxy@latest
+npm install -g antigravity-touch@latest
 ```
 
 Then run it anytime with:
 
 ```bash
-antigravity-mobile-proxy
+antigravity-touch
 ```
 
 > 💡 **Which should I use?** Use `npx` if you want to always run the latest version with zero setup. Use `npm install -g` if you prefer a persistent global command or plan to use the `--install` service feature.
@@ -72,18 +72,18 @@ antigravity-mobile-proxy
 Open your terminal and run:
 
 ```bash
-npx antigravity-mobile-proxy@latest
+npx antigravity-touch@latest
 ```
 
 That's it! The proxy will **automatically detect and connect to Antigravity** (or start it if it's not running). A setup wizard will walk you through the tunnel configuration:
 
 ```
   ╔═══════════════════════════════════════════════════════╗
-  ║  🚀 Antigravity Mobile Proxy                          ║
+  ║  🚀 Antigravity Touch                          ║
   ║  Secure tunnel to your IDE with Google OAuth          ║
   ╚═══════════════════════════════════════════════════════╝
 
-  ℹ Welcome! Let's set up your Antigravity Mobile Proxy.
+  ℹ Welcome! Let's set up your Antigravity Touch.
   
   [1/3] ngrok Authentication
   [2/3] Access Control (your Google email)
@@ -103,6 +103,30 @@ Once complete, you'll get a **public URL** that you can open on any device:
 ```
 
 Open that URL on your phone or any browser — sign in with your Google account, and you're chatting with your AI agent! 🎉
+
+---
+
+## Windows one-click startup / remote access
+
+When running from this repository on Windows, use the bundled scripts:
+
+```powershell
+# Public mode: phone can access even outside the same Wi-Fi (ngrok + Google OAuth)
+.\start-remote.cmd
+
+# LAN mode: phone and computer are on the same Wi-Fi
+.\start-local.cmd
+```
+
+For the first run, create a local config file:
+
+```powershell
+copy .env.example .env.local
+```
+
+Then fill `NGROK_AUTHTOKEN` and `ALLOWED_EMAIL` in `.env.local`. If you have an ngrok reserved domain, set `NGROK_DOMAIN` for a stable URL.
+
+When switching computers: clone the repo, copy `.env.example` to `.env.local`, fill the local values, then run `.\start-remote.cmd`. See [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md) for the full Chinese guide.
 
 ---
 
@@ -132,7 +156,7 @@ Your tunnel is protected by Google OAuth — only the email address you specify 
 ### Run with the Interactive Wizard (Recommended)
 
 ```bash
-npx antigravity-mobile-proxy@latest
+npx antigravity-touch@latest
 ```
 
 The wizard remembers your settings, so next time it will just ask you to confirm and start.
@@ -140,23 +164,31 @@ The wizard remembers your settings, so next time it will just ask you to confirm
 ### Run with Command-Line Options (Skip the Wizard)
 
 ```bash
-npx antigravity-mobile-proxy@latest --email you@gmail.com
+npx antigravity-touch@latest --email you@gmail.com
 ```
 
 ### Run Locally (No Tunnel)
 
-If you only want to access the proxy from your own computer (no phone/remote access):
+If you want to access the proxy on your local network without ngrok:
 
 ```bash
-npx antigravity-mobile-proxy@latest --no-tunnel
+npx antigravity-touch@latest --no-tunnel
 ```
 
-This starts the chat UI at `http://localhost:5555` without creating a public URL.
+This binds the server to `0.0.0.0` and prints a LAN/mobile URL such as
+`http://192.168.1.23:5555`. Open that URL from your phone while it is on the
+same Wi-Fi. If Windows Firewall prompts, allow Node.js on Private networks.
+
+To force desktop-only access, bind explicitly to localhost:
+
+```bash
+npx antigravity-touch@latest --no-tunnel --host 127.0.0.1
+```
 
 ### Use a Different Port
 
 ```bash
-npx antigravity-mobile-proxy@latest --port 8080
+npx antigravity-touch@latest --port 8080
 ```
 
 ### Run Always-On (Recommended)
@@ -165,10 +197,10 @@ Want the proxy to be **always available** whenever your computer is on? Install 
 
 ```bash
 # First run the wizard once to save your settings
-npx antigravity-mobile-proxy@latest
+npx antigravity-touch@latest
 
 # Then install the auto-start service
-npx antigravity-mobile-proxy@latest --install
+npx antigravity-touch@latest --install
 ```
 
 This works automatically on:
@@ -180,16 +212,16 @@ The service **auto-starts on login** and **auto-restarts on crashes**. Your ngro
 
 ```bash
 # Check if the service is running
-npx antigravity-mobile-proxy@latest --status
+npx antigravity-touch@latest --status
 
 # Remove the auto-start service
-npx antigravity-mobile-proxy@latest --uninstall
+npx antigravity-touch@latest --uninstall
 ```
 
 ### Reset Your Saved Settings
 
 ```bash
-npx antigravity-mobile-proxy@latest --reset
+npx antigravity-touch@latest --reset
 ```
 
 ### All Options
@@ -198,6 +230,7 @@ npx antigravity-mobile-proxy@latest --reset
 |--------|-------------|
 | `--email <email>` | Your Google email (skips the wizard question) |
 | `--port <number>` | Server port (default: `5555`) |
+| `--host <address>` | Bind address (default: `127.0.0.1`, or `0.0.0.0` with `--no-tunnel`) |
 | `--authtoken <token>` | ngrok auth token (skips the wizard question) |
 | `--no-tunnel` | Run locally without creating a public URL |
 | `--install` | Install as auto-start background service (survives reboot) |
@@ -266,7 +299,7 @@ The proxy automatically starts Antigravity if it's not running. If it still can'
 Your token may have expired. Get a new one from [dashboard.ngrok.com/get-started/your-authtoken](https://dashboard.ngrok.com/get-started/your-authtoken) and run:
 
 ```bash
-npx antigravity-mobile-proxy@latest --reset
+npx antigravity-touch@latest --reset
 ```
 
 ### The tunnel disconnects
@@ -278,7 +311,7 @@ The proxy automatically reconnects when the tunnel drops (e.g., if your network 
 Use a different port:
 
 ```bash
-npx antigravity-mobile-proxy@latest --port 8080
+npx antigravity-touch@latest --port 8080
 ```
 
 ---
@@ -288,7 +321,7 @@ npx antigravity-mobile-proxy@latest --port 8080
 ```
 ┌─────────────────┐       ┌──────────────────────┐       ┌─────────────────┐
 │                 │       │                      │       │                 │
-│  Your Phone /   │◄─SSE──│  Antigravity Mobile  │◄─CDP──│  Antigravity    │
+│  Your Phone /   │◄─SSE──│  Antigravity Touch   │◄─CDP──│  Antigravity    │
 │  Any Browser    │──REST─│  Proxy (Next.js)     │──────│  IDE (Electron) │
 │                 │       │                      │       │                 │
 └─────────────────┘       └──────────────────────┘       └─────────────────┘
@@ -298,7 +331,7 @@ npx antigravity-mobile-proxy@latest --port 8080
               (encrypted)
 ```
 
-1. **You run `npx antigravity-mobile-proxy`** → the proxy auto-starts Antigravity if needed
+1. **You run `npx antigravity-touch`** → the proxy auto-starts Antigravity if needed
 2. **You type a message** in the web chat → it goes to the proxy server on your computer
 3. **The proxy types it into the IDE** using Chrome DevTools Protocol (CDP)
 4. **The proxy watches the IDE** by reading the agent panel's state every 500ms
@@ -316,7 +349,7 @@ npx antigravity-mobile-proxy@latest --port 8080
 
 ```bash
 git clone <repo-url>
-cd antigravity-mobile-proxy
+cd antigravity-touch
 npm install
 npm run dev
 ```
@@ -397,7 +430,7 @@ When using `/api/v1/chat/stream`:
 ### Project Structure
 
 ```
-antigravity-mobile-proxy/
+antigravity-touch/
 ├── app/                          # Next.js App Router
 │   ├── layout.tsx                # Root layout
 │   ├── page.tsx                  # Main chat page

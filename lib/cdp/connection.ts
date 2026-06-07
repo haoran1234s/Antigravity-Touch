@@ -6,6 +6,7 @@
 import puppeteer, { Browser } from 'puppeteer-core';
 import { logger } from '../logger';
 import type { ProxyContext } from '../types';
+import { isAntigravityWorkbenchTarget } from './targets';
 
 const CDP_PORT_RAW = process.env.CDP_PORT || '9223';
 const CDP_PORT = parseInt(CDP_PORT_RAW, 10);
@@ -41,8 +42,9 @@ export async function discoverWorkbenches(ctx: ProxyContext) {
   ctx.allWorkbenches = [];
   for (const p of pages) {
     const url = p.url();
-    if (url.includes('workbench.html') && !url.includes('jetski')) {
-      const title = await p.title();
+    const title = await p.title();
+    const type = p.target().type();
+    if (isAntigravityWorkbenchTarget({ type, title, url })) {
       // Get the stable CDP target ID directly from the Puppeteer page's
       // internal target object. This is a unique identifier that stays
       // stable regardless of page ordering, unlike positional indices.
@@ -71,7 +73,7 @@ export async function connectToWorkbench(ctx: ProxyContext) {
 
   if (ctx.allWorkbenches.length === 0) {
     throw new Error(
-      'No workbench pages found. Is Antigravity running with --remote-debugging-port=9223?'
+      `No Antigravity workbench pages found. Is Antigravity running with --remote-debugging-port=${CDP_PORT}?`
     );
   }
 

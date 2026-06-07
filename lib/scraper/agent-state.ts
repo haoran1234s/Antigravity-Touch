@@ -4,12 +4,12 @@
  */
 
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { SELECTORS } from '../cdp/selectors';
 import type { ProxyContext, AgentState } from '../types';
 
-const DEBUG_FILE = path.join(os.tmpdir(), 'proxy-debug-state.json');
+const runtimeTmpdir = (): string => eval('require')('os').tmpdir();
+const getDebugFile = () => path.join(runtimeTmpdir(), 'proxy-debug-state.json');
 
 /**
  * Get a comprehensive snapshot of the entire agent panel state.
@@ -54,7 +54,16 @@ export async function getFullAgentState(ctx: ProxyContext): Promise<AgentState> 
       mcpOutput?: string | null;
     }
 
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const sidePanel = document.querySelector('.antigravity-agent-side-panel');
+    // Antigravity 2.x can render the chat as a full workbench page instead of
+    // the old `.antigravity-agent-side-panel`. Keep the legacy panel when it
+    // exists, but fall back to the app root/body so mobile clients can still
+    // scrape replies from the newer DOM.
+    const panel =
+      sidePanel ||
+      document.querySelector('#root') ||
+      document.querySelector('[data-vscode-theme-kind]') ||
+      document.body;
     if (!panel)
       return {
         isRunning: false,
@@ -184,7 +193,7 @@ export async function getFullAgentState(ctx: ProxyContext): Promise<AgentState> 
     // Fallback to other signals only if the input button state was ambiguous
     if (!buttonStateDefinitive) {
       // Signal A: Visible spinner
-      const spinners = panel.querySelectorAll(spinnerSel);
+      const spinners = panel.querySelectorAll(`${spinnerSel}, .animate-spin`);
       for (const spinner of spinners) {
         let el: Element | null = spinner;
         let hidden = false;
@@ -225,13 +234,54 @@ export async function getFullAgentState(ctx: ProxyContext): Promise<AgentState> 
     }
 
     // ── 2. Turn & Step Group structure ──
-    const conversation =
-      panel.querySelector('#conversation') ||
-      document.querySelector('#conversation');
-    const scrollArea = conversation?.querySelector('.overflow-y-auto');
-    const msgList = scrollArea?.querySelector('.mx-auto');
+    const findConversationList = (): Element | null => {
+      const conversation =
+        panel.querySelector('#conversation') ||
+        document.querySelector('#conversation');
+      if (conversation) {
+        const scrollArea = conversation.querySelector('.overflow-y-auto');
+        const msgList =
+          scrollArea?.querySelector('.mx-auto') ||
+          conversation.querySelector('.mx-auto.w-full') ||
+          conversation;
+        if (msgList) return msgList;
+      }
+
+      // New full-page Antigravity layout: the conversation is usually a
+      // `.mx-auto.w-full` container and direct children are turns. Pick the
+      // candidate that actually contains user/assistant message blocks.
+      const candidates = Array.from(
+        document.querySelectorAll('.mx-auto.w-full, .mx-auto[class*="w-full"]')
+      );
+      const scored = candidates
+        .map((el) => {
+          const responseCount = el.querySelectorAll('.leading-relaxed.select-text').length;
+          const userCount = el.querySelectorAll('[class*="group/user-input-step"]').length;
+          const textLen = (el.textContent || '').trim().length;
+          return { el, score: responseCount * 1000 + userCount * 500 + Math.min(textLen, 499) };
+        })
+        .filter((item) => item.score >= 500)
+        .sort((a, b) => b.score - a.score);
+      if (scored[0]) return scored[0].el;
+
+      const response = document.querySelector('.leading-relaxed.select-text');
+      return (
+        response?.closest('.mx-auto.w-full') ||
+        response?.closest('[class*="overflow-y-auto"]') ||
+        response?.parentElement ||
+        null
+      );
+    };
+
+    const msgList = findConversationList();
     const allTurns = msgList ? Array.from(msgList.children) : [];
-    const turnCount = allTurns.length;
+    const logicalTurnCount = msgList
+      ? (
+          msgList.querySelectorAll('[data-testid="user-input-step"], [class*="group/user-input-step"]').length +
+          msgList.querySelectorAll('.leading-relaxed.select-text, .notify-user-container').length
+        )
+      : 0;
+    const turnCount = logicalTurnCount || allTurns.length;
     const lastTurn =
       allTurns.length > 0 ? allTurns[allTurns.length - 1] : null;
 
@@ -1028,13 +1078,16 @@ export async function getFullAgentState(ctx: ProxyContext): Promise<AgentState> 
       // Silent skip for resilience
     }
 
-    // Signal C: any tool still executing
-    if (!isRunning && toolCalls.some((t: BrowserToolCall) => t.hasCancelBtn && !t.exitCode)) {
+    // Signal C: any tool still executing.
+    // If the input send/cancel control gave a definitive idle state, do not let
+    // stale/virtualized tool DOM override it. This fixes completed chats that
+    // still contain historical "Cancel" or permission-looking controls.
+    if (!isRunning && !buttonStateDefinitive && toolCalls.some((t: BrowserToolCall) => t.hasCancelBtn && !t.exitCode)) {
       isRunning = true;
     }
 
     // Signal D: Active task boundary / subagent execution
-    if (!isRunning) {
+    if (!isRunning && !buttonStateDefinitive) {
       const lastStepGroup = stepGroups[stepGroups.length - 1];
       if (lastStepGroup) {
         const stepSpinners = lastStepGroup.querySelectorAll('.animate-spin');
@@ -1159,8 +1212,13 @@ export async function getFullAgentState(ctx: ProxyContext): Promise<AgentState> 
       if (html) responses.push(html);
     }
     if (finalBlocks.length > 0) {
+      const clone = finalBlocks[finalBlocks.length - 1].cloneNode(true) as Element;
+      clone.querySelectorAll('style, script').forEach((el) => el.remove());
+      clone.querySelectorAll(
+        'svg.cursor-pointer, [class*="cursor-pointer"][class*="opacity-70"], button[class*="opacity-70"]'
+      ).forEach((el) => el.remove());
       lastTurnResponseHTML =
-        (finalBlocks[finalBlocks.length - 1] as HTMLElement).innerHTML || '';
+        (clone as HTMLElement).innerHTML?.trim() || '';
     }
 
     // ── 7. Error detection ──
@@ -1237,7 +1295,7 @@ export async function getFullAgentState(ctx: ProxyContext): Promise<AgentState> 
       error: state.error,
       inputBoxHTML: (state as any).inputBoxHTML || '',
     };
-    fs.writeFileSync(DEBUG_FILE, JSON.stringify(debug, null, 2));
+    fs.writeFileSync(getDebugFile(), JSON.stringify(debug, null, 2));
   } catch (err) {
     console.error('Failed to write debug file', err);
     // Silent — debug file writing should never break scraping

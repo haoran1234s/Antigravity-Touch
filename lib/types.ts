@@ -13,6 +13,7 @@ export interface ProxyContext {
   activeWindowIdx: number;
   activeConversationId: string | null;
   activeTitle?: string | null;
+  activeConversationSource?: 'ide' | 'brain' | null;
   lastActionTimestamp: number;
 }
 
@@ -75,6 +76,9 @@ export interface ChatHistory {
   isRunning: boolean;
   turnCount: number;
   turns: ChatTurn[];
+  source?: 'ide' | 'brain' | 'none';
+  error?: string;
+  ideError?: string;
 }
 
 // ── SSE Events ──
@@ -128,6 +132,20 @@ export interface ConversationInfo {
   index: number;
   mtime?: string;
   files?: ArtifactFile[];
+  source?: 'ide' | 'brain' | 'mixed';
+  summary?: string;
+  workspacePaths?: string[];
+  projectName?: string;
+  projectPath?: string;
+}
+
+export interface ConversationProjectGroup {
+  id: string;
+  name: string;
+  path?: string;
+  active: boolean;
+  conversationCount: number;
+  conversations: ConversationInfo[];
 }
 
 export interface ArtifactFile {

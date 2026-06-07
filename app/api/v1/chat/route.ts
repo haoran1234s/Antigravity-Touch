@@ -30,26 +30,38 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const initialState = await getFullAgentState(ctx);
     await sendMessage(ctx, message);
 
     const startTime = Date.now();
     const timeoutMs = 180000;
     let doneCount = 0;
     let started = false;
-    const initialState = await getFullAgentState(ctx);
+    const initialTurnCount = initialState.turnCount;
     const initialBlockCount = initialState.responses.length + initialState.notifications.length;
+    let sawRunning = false;
+    let sawOutput = false;
 
     // Phase 1: Wait for agent to start
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 120; i++) {
       await sleep(300);
       const state = await getFullAgentState(ctx);
       if (state.isRunning) {
+        started = true;
+        sawRunning = true;
+        break;
+      }
+      if (state.turnCount > initialTurnCount) {
+        // The desktop accepted the user message. Some Antigravity builds take
+        // a few seconds before the cancel/running UI flips, so do not return
+        // "[Agent did not respond]" just because the first poll window missed it.
         started = true;
         break;
       }
       const blocks = state.responses.length + state.notifications.length;
       if (blocks > initialBlockCount) {
         started = true;
+        sawOutput = true;
         await sleep(500);
         const check = await getFullAgentState(ctx);
         if (!check.isRunning) {
@@ -78,7 +90,17 @@ export async function POST(request: NextRequest) {
       if (state.error) {
         return NextResponse.json({ response: state.error });
       }
+      if (state.isRunning) sawRunning = true;
+      const blocks = state.responses.length + state.notifications.length;
+      if (blocks > initialBlockCount) sawOutput = true;
       if (!state.isRunning) {
+        if (!sawRunning && !sawOutput && Date.now() - startTime < 60000) {
+          // User turn is visible, but no agent output/running signal yet.
+          // Keep waiting; otherwise desktop-started slow turns are reported as
+          // completed before they actually begin.
+          await sleep(500);
+          continue;
+        }
         doneCount++;
         if (doneCount >= 3) {
           const response = state.notifications.length > 0

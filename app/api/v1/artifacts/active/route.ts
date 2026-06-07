@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { ensureCdpConnection } from '@/lib/init';
 import ctx from '@/lib/context';
 import { getIdeArtifacts } from '@/lib/scraper/ide-artifacts';
+import { getBrainArtifacts } from '@/lib/brain-conversations';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,16 @@ export async function GET() {
     await ensureCdpConnection();
 
     if (!ctx.workbenchPage) {
+      const brainFiles = getBrainArtifacts(ctx.activeConversationId);
+      if (brainFiles.length > 0) {
+        return NextResponse.json({
+          files: brainFiles,
+          source: 'brain',
+          conversationTitle: ctx.activeTitle,
+          totalCount: brainFiles.length,
+        });
+      }
+
       return NextResponse.json({
         files: [],
         source: 'none',
@@ -40,6 +51,17 @@ export async function GET() {
       totalCount: ideResult.totalCount,
     });
   } catch (err: any) {
+    const brainFiles = getBrainArtifacts(ctx.activeConversationId);
+    if (brainFiles.length > 0) {
+      return NextResponse.json({
+        files: brainFiles,
+        source: 'brain',
+        conversationTitle: ctx.activeTitle,
+        totalCount: brainFiles.length,
+        ideError: err.message,
+      });
+    }
+
     return NextResponse.json(
       { files: [], source: 'none', error: err.message },
       { status: 500 }

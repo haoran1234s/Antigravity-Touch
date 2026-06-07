@@ -12,6 +12,14 @@ import type { ChatMessage, SSEStep } from '@/lib/types';
 import { fetcher, SWR_KEYS } from '@/lib/swr-fetcher';
 
 const API_BASE = '/api/v1';
+const SELECTED_CONVERSATION_KEY = 'antigravity-mobile:selected-conversation:v1';
+
+type NewChatTarget = {
+  name?: string;
+  path?: string;
+  projectName?: string;
+  projectPath?: string;
+};
 
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -177,6 +185,7 @@ export function useChat() {
   const {
     windows,
     conversations,
+    conversationProjects,
     activeConversation,
     cdpStatus,
     recentProjects,
@@ -311,6 +320,25 @@ export function useChat() {
     scrollToBottom();
   }, [setStatus, scrollToBottom, loadArtifacts, loadChanges]);
 
+  const finalizeObservedAgentMessage = useCallback(() => {
+    const finalResponse = currentResponseRef.current;
+    const finalSteps = [...currentStepsRef.current];
+
+    setIsStreaming(false);
+    setCurrentResponse('');
+    setCurrentSteps([]);
+    currentResponseRef.current = '';
+    currentStepsRef.current = [];
+
+    if (finalResponse || finalSteps.length > 0) {
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.role === 'agent' && last.content === finalResponse) return prev;
+        return [...prev, { role: 'agent', content: finalResponse, steps: finalSteps }];
+      });
+    }
+  }, []);
+
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim()) return;
 
@@ -440,21 +468,31 @@ export function useChat() {
     await streamPromiseRef.current;
   }, [handleSSEvent, setStatus]);
 
-  const startNewChat = useCallback(async () => {
+  const startNewChat = useCallback(async (project?: NewChatTarget) => {
     if (controllerRef.current) controllerRef.current.abort();
+    try {
+      window.localStorage.removeItem(SELECTED_CONVERSATION_KEY);
+    } catch { /* ignore storage failures */ }
     setMessages([]);
     setCurrentSteps([]);
     setCurrentResponse('');
     setShowWelcome(true);
 
     try {
-      const res = await fetch(`${API_BASE}/chat/new`, { method: 'POST' });
+      const projectName = project?.projectName || project?.name;
+      const projectPath = project?.projectPath || project?.path;
+      const res = await fetch(`${API_BASE}/chat/new`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectName, projectPath }),
+      });
       const data = await res.json();
       if (data.success) {
-        setStatus('connected', 'New Chat');
+        setStatus('connected', projectName ? `New Chat - ${projectName}` : 'New Chat');
+        setTimeout(() => loadConversations(), 600);
       }
     } catch { /* ignore */ }
-  }, [setStatus]);
+  }, [setStatus, loadConversations]);
 
   const stopStreaming = useCallback(() => {
     // 1) Cancel the SSE stream on the proxy side
@@ -490,42 +528,77 @@ export function useChat() {
     autoConnect: true,
     onActivityStart: () => {
       setIsAgentBusy(true);
-      // Only update status if we're not already streaming from sendMessage
-      if (!isStreamingRef.current) {
+      // controllerRef is only set for mobile-originated /chat/stream runs.
+      // If the desktop IDE starts working directly, mirror it as a live mobile stream.
+      if (!controllerRef.current) {
+        if (!isStreamingRef.current) {
+          setShowWelcome(false);
+          setIsStreaming(true);
+          setCurrentSteps([]);
+          setCurrentResponse('');
+          currentStepsRef.current = [];
+          currentResponseRef.current = '';
+        }
         setStatusState('streaming');
         setStatusText('Agent working...');
       }
     },
     onActivityEnd: () => {
       setIsAgentBusy(false);
-      if (!isStreamingRef.current) {
+      if (!controllerRef.current) {
+        finalizeObservedAgentMessage();
         setStatusState('connected');
         setStatusText('Agent');
-        // Refresh history, artifacts, and changes since the agent finished
         mutateHistory();
+        loadConversations();
         loadArtifacts();
         loadChanges();
       }
     },
     onTurnChange: () => {
-      // A new turn appeared — someone typed from the IDE directly
-      if (!isStreamingRef.current) {
+      if (!controllerRef.current) {
         setShowWelcome(false);
         mutateHistory();
+        loadConversations();
       }
     },
     onModeChange: ({ newMode }) => {
       setCurrentMode(newMode as 'planning' | 'fast');
     },
     onSync: (data) => {
-      // Reconcile state from periodic sync
       if (typeof data.isRunning === 'boolean') {
         setIsAgentBusy(data.isRunning as boolean);
+        if (!controllerRef.current && data.isRunning && !isStreamingRef.current) {
+          setShowWelcome(false);
+          setIsStreaming(true);
+          setStatusState('streaming');
+          setStatusText('Agent working...');
+        }
+        if (!controllerRef.current && !data.isRunning && isStreamingRef.current) {
+          finalizeObservedAgentMessage();
+          setStatusState('connected');
+          setStatusText('Agent');
+        }
+      }
+      if ((data as any).activeConversation) {
+        loadConversations();
       }
     },
+    onConversationChange: () => {
+      if (controllerRef.current) return;
+      finalizeObservedAgentMessage();
+      setShowWelcome(false);
+      fetchHistory();
+      loadConversations();
+      loadArtifacts();
+      loadChanges();
+    },
     onEvent: (event) => {
-      // Forward relevant events to the current steps if agent is busy externally
-      if (!isStreamingRef.current && (event.type === 'tool_call' || event.type === 'response' || event.type === 'thinking' || event.type === 'hitl' || event.type === 'notification')) {
+      if (!controllerRef.current && (event.type === 'tool_call' || event.type === 'response' || event.type === 'thinking' || event.type === 'hitl' || event.type === 'notification')) {
+        if (!isStreamingRef.current) {
+          setShowWelcome(false);
+          setIsStreaming(true);
+        }
         handleSSEvent(event as any);
       }
     },
@@ -542,7 +615,7 @@ export function useChat() {
   return {
     messages, isStreaming, isConnected, statusText, statusState,
     showWelcome, isLoadingHistory, currentSteps, currentResponse, windows,
-    conversations, activeConversation, artifactFiles, artifactPanelOpen,
+    conversations, conversationProjects, activeConversation, artifactFiles, artifactPanelOpen,
     changeFiles, changesPanelOpen, acceptAllChanges, rejectAllChanges, isAccepting, isRejecting,
     gitStatus, gitPanelOpen, gitChangedCount, toggleGitPanel, refreshGit,
     workspaceTree, workspacePanelOpen, workspaceLoading, toggleWorkspacePanel, refreshWorkspace,

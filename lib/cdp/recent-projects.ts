@@ -109,8 +109,12 @@ export function getRecentProjects(limit: number = 15): RecentProject[] {
           fsPath = folderUri;
         }
 
-        // Skip playground directories
+        // Skip playground and proxy build-output directories. The standalone
+        // server runs with cwd `.next/standalone`; if Antigravity records that
+        // as a recent workspace, auto-recovery can reopen the build directory
+        // and lock `.next/standalone`, breaking future rebuilds on Windows.
         if (fsPath.includes('/playground/') || fsPath.includes('\\playground\\')) continue;
+        if (fsPath.includes('/.next/standalone') || fsPath.includes('\\.next\\standalone')) continue;
 
         // Skip directories that no longer exist
         try {

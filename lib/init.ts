@@ -18,11 +18,15 @@
  */
 
 import { connectToWorkbench } from './cdp/connection';
-import { isCdpServerActive, startCdpServer, waitForWorkbenchPages } from './cdp/process-manager';
+import {
+  isCdpServerActive,
+  isProcessControlAllowed,
+  startCdpServer,
+  waitForWorkbenchPages,
+} from './cdp/process-manager';
 import { getRecentProjects } from './cdp/recent-projects';
 import { logger } from './logger';
 import ctx from './context';
-import { homedir } from 'os';
 import * as dns from 'dns';
 
 let initialized = false;
@@ -35,6 +39,10 @@ const MAX_RECOVERY_ATTEMPTS = 3;
 // Use string concatenation to defeat Turbopack DCE (same technique as process-manager.ts)
 const IS_WIN = (() => { const p = 'plat', f = 'form'; return (process as any)[p + f] === 'win32'; })();
 const POST_RESTART_SETTLE_MS = IS_WIN ? 5000 : 3000;
+
+// Runtime-only home lookup. Keeping this out of static analysis prevents
+// Next.js standalone tracing from globbing the entire user profile.
+const runtimeHomedir = (): string => eval('require')('os').homedir();
 
 // ── Network Watchdog ─────────────────────────────────────────────────────────
 /** How often (ms) to probe for network connectivity in the watchdog */
@@ -71,6 +79,12 @@ export function startNetworkWatchdog() {
     if (online && lastNetworkState === false) {
       // Network just came back!
       logger.info('[Network] Connectivity restored. Triggering CDP reconnect...');
+      if (!isProcessControlAllowed()) {
+        logger.info('[Network] Desktop safe mode is enabled; skipping automatic CDP reconnect.');
+        lastNetworkState = online;
+        watchdogTimer = setTimeout(tick, WATCHDOG_INTERVAL_MS);
+        return;
+      }
       resetInitState();
       // Fire-and-forget: attempt reconnect now so the next request doesn't have to wait
       ensureCdpConnection().catch((e) => {
@@ -119,7 +133,7 @@ function getDefaultProjectDir(): string {
   } catch (e: any) {
     logger.warn(`[CDP Init] Failed to read recent projects: ${e.message}`);
   }
-  const fallback = homedir();
+  const fallback = runtimeHomedir();
   logger.info(`[CDP Init] No recent projects found, using home dir: ${fallback}`);
   return fallback;
 }
@@ -155,6 +169,7 @@ export async function ensureCdpConnection(): Promise<void> {
       // ── Auto-Recovery ────────────────────────────────────────────
       // Detect the state and attempt to fix it automatically.
       logger.info('[CDP Init] Attempting auto-recovery...');
+      const canControlProcess = isProcessControlAllowed();
 
       for (let attempt = 1; attempt <= MAX_RECOVERY_ATTEMPTS; attempt++) {
         logger.info(`[CDP Init] Recovery attempt ${attempt}/${MAX_RECOVERY_ATTEMPTS}`);
@@ -204,12 +219,32 @@ export async function ensureCdpConnection(): Promise<void> {
               logger.warn(`[CDP Init] Connection after page wait failed: ${retryErr.message}`);
             }
           } else {
-            logger.warn('[CDP Init] No workbench pages appeared after 10s. Will kill and restart...');
+            logger.warn(
+              canControlProcess
+                ? '[CDP Init] No workbench pages appeared after 10s. Will kill and restart...'
+                : '[CDP Init] No workbench pages appeared after 10s. Desktop safe mode is enabled; leaving the IDE untouched.'
+            );
           }
         } else if (!status.active) {
           // ── CASE 3: CDP not reachable ────────────────────────────
           // Antigravity is not running, or was launched without --remote-debugging-port.
-          logger.warn('[CDP Init] CDP server not reachable. Starting Antigravity with CDP...');
+          logger.warn(
+            canControlProcess
+              ? '[CDP Init] CDP server not reachable. Starting Antigravity with CDP...'
+              : '[CDP Init] CDP server not reachable. Desktop safe mode is enabled; leaving the IDE untouched.'
+          );
+        }
+
+        if (!canControlProcess) {
+          const reason = status.active
+            ? 'CDP is reachable but no Antigravity workbench page is available'
+            : 'CDP is not reachable';
+          const message =
+            `${reason}. Antigravity process control is disabled by ` +
+            'ANTIGRAVITY_DESKTOP_SAFE_MODE, so the proxy will not kill, restart, or start the desktop IDE.';
+          logger.warn(`[CDP Init] ${message}`);
+          initPromise = null;
+          throw new Error(message);
         }
 
         // ── Kill + Restart ────────────────────────────────────────

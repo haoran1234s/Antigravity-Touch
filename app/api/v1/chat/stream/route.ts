@@ -90,6 +90,9 @@ export async function POST(request: NextRequest) {
         let started = false;
         let lastStableHTML = '';
         const initialTurnCount = prevState.turnCount;
+        const initialResponseCount = prevState.responses.length;
+        const initialNotificationCount = prevState.notifications.length;
+        let scopedToNewTurn = false;
         let pollErrorCount = 0;
 
         const interval = setInterval(async () => {
@@ -100,8 +103,17 @@ export async function POST(request: NextRequest) {
             pollErrorCount = 0; // Reset on success
 
             // Track tools by ID to survive virtualization
+            if (currState.turnCount > initialTurnCount) {
+              scopedToNewTurn = true;
+            }
+            if (scopedToNewTurn) {
+              currState.responses = currState.responses.slice(initialResponseCount);
+              currState.notifications = currState.notifications.slice(initialNotificationCount);
+            }
+
             if (currState.turnCount > prevState.turnCount) {
               sessionToolCalls.clear();
+              sessionResponses = [];
               prevState = {
                 ...prevState,
                 toolCalls: [],
