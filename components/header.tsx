@@ -40,6 +40,8 @@ export default function Header({
   const [isOpening, setIsOpening] = useState(false);
   const [isStartingCdp, setIsStartingCdp] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [pendingClose, setPendingClose] = useState<{ idx: number; targetId?: string; title: string } | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -52,6 +54,16 @@ export default function Header({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Dismiss the close-confirm dialog with Escape.
+  useEffect(() => {
+    if (!pendingClose) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isClosing) setPendingClose(null);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [pendingClose, isClosing]);
 
   // Clear action message after 4 seconds
   useEffect(() => {
@@ -103,16 +115,26 @@ export default function Header({
     }
   };
 
-  const handleCloseWindow = async (idx: number, targetId: string | undefined, e: React.MouseEvent) => {
+  const handleCloseWindow = (idx: number, targetId: string | undefined, e: React.MouseEvent) => {
     e.stopPropagation();
-    const confirmed = window.confirm(`Close window "${windows[idx]?.title || idx}"?`);
-    if (!confirmed) return;
+    setPendingClose({ idx, targetId, title: windows[idx]?.title || String(idx) });
+  };
 
-    const result = await onCloseWindow(idx, targetId);
-    setActionMessage({
-      text: result.message || (result.success ? 'Closed!' : 'Failed to close'),
-      type: result.success ? 'success' : 'error',
-    });
+  const confirmCloseWindow = async () => {
+    if (!pendingClose || isClosing) return;
+    setIsClosing(true);
+    try {
+      const result = await onCloseWindow(pendingClose.idx, pendingClose.targetId);
+      setActionMessage({
+        text: result.message || (result.success ? 'Closed!' : 'Failed to close'),
+        type: result.success ? 'success' : 'error',
+      });
+    } catch {
+      setActionMessage({ text: 'Failed to close window', type: 'error' });
+    } finally {
+      setIsClosing(false);
+      setPendingClose(null);
+    }
   };
 
   return (
@@ -310,6 +332,45 @@ export default function Header({
           </svg>
         </button>
       </div>
+
+      {pendingClose && (
+        <div
+          className="confirm-overlay"
+          onClick={() => !isClosing && setPendingClose(null)}
+          role="presentation"
+        >
+          <div
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-close-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div id="confirm-close-title" className="confirm-title">Close window?</div>
+            <div className="confirm-message">
+              This will close <strong>&ldquo;{pendingClose.title}&rdquo;</strong> in Antigravity. Unsaved changes may be lost.
+            </div>
+            <div className="confirm-actions">
+              <button
+                className="confirm-btn confirm-cancel"
+                onClick={() => setPendingClose(null)}
+                disabled={isClosing}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="confirm-btn confirm-danger"
+                onClick={confirmCloseWindow}
+                disabled={isClosing}
+                type="button"
+              >
+                {isClosing ? 'Closing…' : 'Close window'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </header>
   );
 }

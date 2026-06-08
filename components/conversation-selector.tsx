@@ -4,6 +4,14 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 
 const COLLAPSED_STORAGE_KEY = 'at_collapsed_projects';
+const PINNED_STORAGE_KEY = 'at_pinned_conversations';
+
+/** Stable identity for pinning — prefers a real id, falls back to index+title. */
+function pinKey(conversation: ConversationInfo) {
+  return conversation.id && !/^-?\d+$/.test(conversation.id)
+    ? `id:${conversation.id}`
+    : `idx:${conversation.index}:${conversation.title || ''}`;
+}
 
 interface ConversationSelectorProps {
   conversations: ConversationInfo[];
@@ -148,7 +156,37 @@ export default function ConversationSelector({
   const [query, setQuery] = useState('');
   const [isMobileLayout, setIsMobileLayout] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [pinned, setPinned] = useState<Set<string>>(new Set());
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Persist pinned conversations so favorites float to the top of each project.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(PINNED_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (Array.isArray(parsed)) setPinned(new Set(parsed));
+      }
+    } catch {
+      // ignore malformed/unavailable storage
+    }
+  }, []);
+
+  const togglePin = (conversation: ConversationInfo) => {
+    const key = pinKey(conversation);
+    setPinned((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        window.localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify(Array.from(next)));
+      } catch {
+        // storage may be unavailable (private mode)
+      }
+      return next;
+    });
+  };
 
   // Persist which project groups are collapsed so the layout is remembered.
   useEffect(() => {
@@ -307,6 +345,10 @@ export default function ConversationSelector({
   // Searching always expands so matches are never hidden behind a collapsed group.
   const searching = query.trim().length > 0;
   const isCollapsed = (project: ProjectView) => !searching && collapsed.has(project.id);
+  const isPinned = (conversation: ConversationInfo) => pinned.has(pinKey(conversation));
+  // Stable sort keeps the existing active/recency order; pinned items float up.
+  const orderConversations = (items: ConversationInfo[]) =>
+    [...items].sort((a, b) => (isPinned(a) ? 0 : 1) - (isPinned(b) ? 0 : 1));
   const allCollapsed = visibleProjects.length > 0 && visibleProjects.every((p) => collapsed.has(p.id));
 
   const toggleAll = () => {
@@ -444,19 +486,40 @@ export default function ConversationSelector({
 
               {!collapsedNow && (
               <div className="conv-project-conversations">
-                {project.conversations.map((conversation, i) => {
+                {orderConversations(project.conversations).map((conversation, i) => {
                   const isCurrent = conversation.active || isSameConversation(current, conversation);
+                  const pinnedNow = isPinned(conversation);
                   return (
-                    <button
+                    <div
                       key={getConversationKey(conversation, i)}
-                      className={`conv-item ${isCurrent ? 'active' : ''}`}
+                      className={`conv-item ${isCurrent ? 'active' : ''} ${pinnedNow ? 'pinned' : ''}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => handleSelect(conversation)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSelect(conversation);
+                        }
+                      }}
                       aria-current={isCurrent ? 'true' : undefined}
                     >
                       <div className="conv-item-header">
                         <span className={`conv-item-dot ${isCurrent ? 'active' : ''}`} />
                         <span className="conv-item-title">{getDisplayTitle(conversation)}</span>
                         {conversation.mtime && <span className="conv-item-time">{formatRelativeTime(conversation.mtime)}</span>}
+                        <button
+                          className={`conv-item-pin ${pinnedNow ? 'pinned' : ''}`}
+                          onClick={(e) => { e.stopPropagation(); togglePin(conversation); }}
+                          title={pinnedNow ? 'Unpin conversation' : 'Pin to top'}
+                          aria-label={pinnedNow ? 'Unpin conversation' : 'Pin conversation to top'}
+                          aria-pressed={pinnedNow}
+                          type="button"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill={pinnedNow ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                          </svg>
+                        </button>
                         {isCurrent && (
                           <span className="conv-item-action" title="Current conversation" aria-hidden="true">
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -469,7 +532,7 @@ export default function ConversationSelector({
                         {getConversationMeta(conversation)}
                       </span>
                       {conversation.summary && <span className="conv-item-preview">{conversation.summary}</span>}
-                    </button>
+                    </div>
                   );
                 })}
               </div>
