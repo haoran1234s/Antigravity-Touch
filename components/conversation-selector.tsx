@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 
+const COLLAPSED_STORAGE_KEY = 'at_collapsed_projects';
+
 interface ConversationSelectorProps {
   conversations: ConversationInfo[];
   projects?: ConversationProjectGroup[];
@@ -145,7 +147,42 @@ export default function ConversationSelector({
   const [showAll, setShowAll] = useState(false);
   const [query, setQuery] = useState('');
   const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Persist which project groups are collapsed so the layout is remembered.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as string[];
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        if (Array.isArray(parsed)) setCollapsed(new Set(parsed));
+      }
+    } catch {
+      // ignore malformed/unavailable storage
+    }
+  }, []);
+
+  const persistCollapsed = (next: Set<string>) => {
+    try {
+      window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(Array.from(next)));
+    } catch {
+      // storage may be unavailable (private mode)
+    }
+  };
+
+  const applyCollapsed = (next: Set<string>) => {
+    setCollapsed(next);
+    persistCollapsed(next);
+  };
+
+  const toggleCollapse = (id: string) => {
+    const next = new Set(collapsed);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    applyCollapsed(next);
+  };
 
   const current = activeConversation || conversations.find(c => c.active) || projects.flatMap(p => p.conversations).find(c => c.active) || null;
 
@@ -267,6 +304,16 @@ export default function ConversationSelector({
     await onNewChat?.(project ? { name: project.name, path: project.path } : undefined);
   };
 
+  // Searching always expands so matches are never hidden behind a collapsed group.
+  const searching = query.trim().length > 0;
+  const isCollapsed = (project: ProjectView) => !searching && collapsed.has(project.id);
+  const allCollapsed = visibleProjects.length > 0 && visibleProjects.every((p) => collapsed.has(p.id));
+
+  const toggleAll = () => {
+    const next = allCollapsed ? new Set<string>() : new Set(groupedProjects.map((p) => p.id));
+    applyCollapsed(next);
+  };
+
   return (
     <div ref={wrapperRef} className={`conv-selector-wrapper ${open ? 'open' : ''}`}>
       <button
@@ -294,6 +341,17 @@ export default function ConversationSelector({
             <div className="conv-dropdown-title-row">
               <span className="conv-dropdown-title">Projects</span>
               {totalCount > 0 && <span className="conv-dropdown-count">{totalCount}</span>}
+              {visibleProjects.length > 1 && !searching && (
+                <button
+                  className="conv-toggle-all"
+                  onClick={(e) => { e.stopPropagation(); toggleAll(); }}
+                  title={allCollapsed ? 'Expand all projects' : 'Collapse all projects'}
+                  aria-label={allCollapsed ? 'Expand all projects' : 'Collapse all projects'}
+                  type="button"
+                >
+                  {allCollapsed ? 'Expand all' : 'Collapse all'}
+                </button>
+              )}
             </div>
             <span className="conv-dropdown-subtitle">Browse projects and open saved conversations without starting a new chat</span>
           </div>
@@ -336,10 +394,28 @@ export default function ConversationSelector({
         </div>
 
         <div className="conv-dropdown-list">
-          {visibleProjects.map((project) => (
-            <div key={project.id} className={`conv-project-section ${project.active ? 'active' : ''}`}>
+          {visibleProjects.map((project) => {
+            const collapsedNow = isCollapsed(project);
+            return (
+            <div key={project.id} className={`conv-project-section ${project.active ? 'active' : ''} ${collapsedNow ? 'collapsed' : ''}`}>
               <div className="conv-project-header">
-                <div className="conv-project-title-line">
+                <div
+                  className="conv-project-title-line"
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={!collapsedNow}
+                  onClick={() => toggleCollapse(project.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      toggleCollapse(project.id);
+                    }
+                  }}
+                  title={collapsedNow ? `Expand ${project.name}` : `Collapse ${project.name}`}
+                >
+                  <svg className={`conv-project-chevron ${collapsedNow ? 'collapsed' : ''}`} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
                   <svg className="conv-project-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                   </svg>
@@ -366,6 +442,7 @@ export default function ConversationSelector({
                 {project.path && <div className="conv-project-path">{project.path}</div>}
               </div>
 
+              {!collapsedNow && (
               <div className="conv-project-conversations">
                 {project.conversations.map((conversation, i) => {
                   const isCurrent = conversation.active || isSameConversation(current, conversation);
@@ -396,8 +473,10 @@ export default function ConversationSelector({
                   );
                 })}
               </div>
+              )}
             </div>
-          ))}
+            );
+          })}
 
           {hiddenCount > 0 && (
             <button
