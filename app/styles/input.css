@@ -15,6 +15,33 @@
   flex-direction: column;
   gap: 8px;
 }
+.input-toolbar-wrap {
+  position: relative;
+  min-width: 0;
+}
+/* Fade hints that appear when the toolbar has more buttons off-screen. */
+.input-toolbar-wrap::before,
+.input-toolbar-wrap::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  z-index: 2;
+}
+.input-toolbar-wrap::before {
+  left: 0;
+  background: linear-gradient(to right, var(--surface-1), transparent);
+}
+.input-toolbar-wrap::after {
+  right: 0;
+  background: linear-gradient(to left, var(--surface-1), transparent);
+}
+.input-toolbar-wrap.can-scroll-left::before { opacity: 1; }
+.input-toolbar-wrap.can-scroll-right::after { opacity: 1; }
 .input-toolbar {
   display: flex;
   align-items: center;
@@ -26,6 +53,12 @@
   max-width: 100%;
 }
 .input-toolbar::-webkit-scrollbar { display: none; }
+.toolbar-btn-label {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
 .toolbar-agent-name {
   font-size: 10px;
   color: var(--text-3);
