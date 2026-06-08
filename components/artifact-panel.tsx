@@ -158,6 +158,7 @@ export default function ArtifactPanel({ open, onClose, activeConversation, files
               }} />
             ) : contentType.includes('image') ? (
               <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
+                 {/* eslint-disable-next-line @next/next/no-img-element -- base64 data URI from a scraped artifact; next/image cannot optimize inline data URIs */}
                  <img src={`data:${contentType};base64,${fileContent}`} 
                       style={{ maxWidth: '100%', borderRadius: '8px', border: '1px solid var(--border-subtle)' }} 
                       alt={viewingFile} />
