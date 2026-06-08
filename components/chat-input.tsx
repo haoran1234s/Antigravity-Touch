@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import QuickCommands from './quick-commands';
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition';
 
+const SEND_ON_ENTER_KEY = 'at_send_on_enter';
+
 interface AgentOption {
   name: string;
   active: boolean;
@@ -44,8 +46,33 @@ export default function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
+  const [sendOnEnter, setSendOnEnter] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Load the Enter-to-send preference (default: Enter sends, matching common chat apps).
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SEND_ON_ENTER_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (stored === 'false') setSendOnEnter(false);
+    } catch {
+      // storage may be unavailable
+    }
+  }, []);
+
+  const toggleSendMode = () => {
+    setSendOnEnter((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SEND_ON_ENTER_KEY, String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    textareaRef.current?.focus();
+  };
 
   /** Insert text into the input, appending to any existing draft, then focus. */
   const insertText = useCallback((text: string) => {
@@ -74,24 +101,40 @@ export default function ChatInput({
     el.style.height = Math.min(el.scrollHeight, 150) + 'px';
   };
 
+  const submitMessage = () => {
+    if (value.trim()) {
+      // Works in both idle and streaming states — sendMessage handles interruption
+      onSend(value);
+      setValue('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    } else if (isStreaming) {
+      // Empty box while streaming → stop
+      onStop();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape' && isStreaming) {
       e.preventDefault();
       onStop();
       return;
     }
-    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+    if (e.key !== 'Enter') return;
+    // Never submit mid-IME-composition (e.g. selecting a Chinese/Japanese candidate with Enter).
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
+    if (sendOnEnter) {
+      // Enter sends; Shift+Enter inserts a newline; Ctrl/Cmd+Enter also sends.
+      if (e.shiftKey) return;
       e.preventDefault();
-      if (value.trim()) {
-        // Works in both idle and streaming states — sendMessage handles interruption
-        onSend(value);
-        setValue('');
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto';
-        }
-      } else if (isStreaming) {
-        // Enter with empty box while streaming → stop
-        onStop();
+      submitMessage();
+    } else {
+      // Legacy: modifier+Enter sends; plain Enter inserts a newline.
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        submitMessage();
       }
     }
   };
@@ -313,7 +356,7 @@ export default function ChatInput({
           placeholder="Ask the Antigravity agent..."
           rows={1}
           aria-label="Chat message input"
-          enterKeyHint="enter"
+          enterKeyHint={sendOnEnter ? 'send' : 'enter'}
           autoComplete="off"
         />
 
@@ -373,7 +416,21 @@ export default function ChatInput({
         </button>
       </div>
       <div className="input-hint">
-        <span>Shift+Enter to send · Enter for new line · Ctrl+N for new chat · Esc to stop</span>
+        <span>
+          {sendOnEnter
+            ? 'Enter to send · Shift+Enter for new line'
+            : 'Shift+Enter to send · Enter for new line'}
+          {' · Ctrl+N for new chat · Esc to stop'}
+        </span>
+        <button
+          className="send-mode-toggle"
+          onClick={toggleSendMode}
+          type="button"
+          title="Switch how Enter behaves"
+          aria-label={`Enter currently ${sendOnEnter ? 'sends the message' : 'inserts a new line'}. Click to switch.`}
+        >
+          {sendOnEnter ? 'Enter sends' : 'Shift+Enter sends'}
+        </button>
       </div>
     </footer>
   );
