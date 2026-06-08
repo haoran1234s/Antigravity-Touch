@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import QuickCommands from './quick-commands';
+import { useSpeechRecognition } from '@/hooks/use-speech-recognition';
 
 interface AgentOption {
   name: string;
@@ -44,6 +46,26 @@ export default function ChatInput({
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  /** Insert text into the input, appending to any existing draft, then focus. */
+  const insertText = useCallback((text: string) => {
+    setValue((prev) => {
+      const sep = prev && !prev.endsWith(' ') && !prev.endsWith('\n') ? ' ' : '';
+      return prev + sep + text;
+    });
+    const el = textareaRef.current;
+    if (el) {
+      el.focus();
+      requestAnimationFrame(() => {
+        el.style.height = 'auto';
+        el.style.height = Math.min(el.scrollHeight, 150) + 'px';
+      });
+    }
+  }, []);
+
+  const { supported: voiceSupported, listening, toggle: toggleVoice } = useSpeechRecognition({
+    onTranscript: insertText,
+  });
 
   const handleInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setValue(e.target.value);
@@ -276,6 +298,9 @@ export default function ChatInput({
           </svg>
         </button>
 
+        {/* Quick Commands — saved prompt snippets */}
+        <QuickCommands onInsert={insertText} />
+
       </div>
 
       {/* Text input row — textarea + send */}
@@ -291,6 +316,23 @@ export default function ChatInput({
           enterKeyHint="enter"
           autoComplete="off"
         />
+
+        {voiceSupported && (
+          <button
+            className={`voice-btn ${listening ? 'listening' : ''}`}
+            onClick={toggleVoice}
+            aria-label={listening ? 'Stop dictation' : 'Start voice dictation'}
+            title={listening ? 'Stop dictation' : 'Voice input'}
+            type="button"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          </button>
+        )}
 
         <button
           className={`send-btn${isStreaming && value.trim()
