@@ -4,6 +4,8 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import QuickCommands from './quick-commands';
 import { useSpeechRecognition } from '@/hooks/use-speech-recognition';
 
+const SEND_ON_ENTER_KEY = 'at_send_on_enter';
+
 interface AgentOption {
   name: string;
   active: boolean;
@@ -44,8 +46,58 @@ export default function ChatInput({
 }: ChatInputProps) {
   const [value, setValue] = useState('');
   const [agentDropdownOpen, setAgentDropdownOpen] = useState(false);
+  const [sendOnEnter, setSendOnEnter] = useState(true);
+  const [toolbarScroll, setToolbarScroll] = useState({ left: false, right: false });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // Track horizontal scroll position of the toolbar so we can show fade hints
+  // on whichever side has more (otherwise hidden) buttons.
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const update = () => {
+      setToolbarScroll({
+        left: el.scrollLeft > 1,
+        right: el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+      });
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      window.removeEventListener('resize', update);
+      ro.disconnect();
+    };
+  }, []);
+
+  // Load the Enter-to-send preference (default: Enter sends, matching common chat apps).
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(SEND_ON_ENTER_KEY);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (stored === 'false') setSendOnEnter(false);
+    } catch {
+      // storage may be unavailable
+    }
+  }, []);
+
+  const toggleSendMode = () => {
+    setSendOnEnter((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SEND_ON_ENTER_KEY, String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    textareaRef.current?.focus();
+  };
 
   /** Insert text into the input, appending to any existing draft, then focus. */
   const insertText = useCallback((text: string) => {
@@ -74,24 +126,40 @@ export default function ChatInput({
     el.style.height = Math.min(el.scrollHeight, 150) + 'px';
   };
 
+  const submitMessage = () => {
+    if (value.trim()) {
+      // Works in both idle and streaming states — sendMessage handles interruption
+      onSend(value);
+      setValue('');
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto';
+      }
+    } else if (isStreaming) {
+      // Empty box while streaming → stop
+      onStop();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape' && isStreaming) {
       e.preventDefault();
       onStop();
       return;
     }
-    if (e.key === 'Enter' && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+    if (e.key !== 'Enter') return;
+    // Never submit mid-IME-composition (e.g. selecting a Chinese/Japanese candidate with Enter).
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+
+    if (sendOnEnter) {
+      // Enter sends; Shift+Enter inserts a newline; Ctrl/Cmd+Enter also sends.
+      if (e.shiftKey) return;
       e.preventDefault();
-      if (value.trim()) {
-        // Works in both idle and streaming states — sendMessage handles interruption
-        onSend(value);
-        setValue('');
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto';
-        }
-      } else if (isStreaming) {
-        // Enter with empty box while streaming → stop
-        onStop();
+      submitMessage();
+    } else {
+      // Legacy: modifier+Enter sends; plain Enter inserts a newline.
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        submitMessage();
       }
     }
   };
@@ -145,7 +213,8 @@ export default function ChatInput({
   return (
     <footer className="input-area">
       {/* Toolbar row — agent selector + mode toggle */}
-      <div className="input-toolbar">
+      <div className={`input-toolbar-wrap${toolbarScroll.left ? ' can-scroll-left' : ''}${toolbarScroll.right ? ' can-scroll-right' : ''}`}>
+      <div className="input-toolbar" ref={toolbarRef}>
         <div ref={dropdownRef} className="agent-selector-wrapper">
           <button
             className="agent-selector-btn"
@@ -244,6 +313,7 @@ export default function ChatInput({
             <line x1="16" y1="13" x2="8" y2="13" />
             <line x1="16" y1="17" x2="8" y2="17" />
           </svg>
+          <span className="toolbar-btn-label">Artifacts</span>
           {artifactCount > 0 && (
             <span className="artifact-badge">{artifactCount}</span>
           )}
@@ -261,6 +331,7 @@ export default function ChatInput({
             <path d="M12 20h9" />
             <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
           </svg>
+          <span className="toolbar-btn-label">Changes</span>
           {changesCount > 0 && (
             <span className="changes-badge">{changesCount}</span>
           )}
@@ -280,6 +351,7 @@ export default function ChatInput({
             <path d="M13 6h3a2 2 0 0 1 2 2v7" />
             <line x1="6" y1="9" x2="6" y2="21" />
           </svg>
+          <span className="toolbar-btn-label">Git</span>
           {gitChangedCount > 0 && (
             <span className="git-badge">{gitChangedCount}</span>
           )}
@@ -296,11 +368,13 @@ export default function ChatInput({
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
+          <span className="toolbar-btn-label">Files</span>
         </button>
 
         {/* Quick Commands — saved prompt snippets */}
         <QuickCommands onInsert={insertText} />
 
+      </div>
       </div>
 
       {/* Text input row — textarea + send */}
@@ -313,7 +387,7 @@ export default function ChatInput({
           placeholder="Ask the Antigravity agent..."
           rows={1}
           aria-label="Chat message input"
-          enterKeyHint="enter"
+          enterKeyHint={sendOnEnter ? 'send' : 'enter'}
           autoComplete="off"
         />
 
@@ -373,7 +447,21 @@ export default function ChatInput({
         </button>
       </div>
       <div className="input-hint">
-        <span>Shift+Enter to send · Enter for new line · Ctrl+N for new chat · Esc to stop</span>
+        <span>
+          {sendOnEnter
+            ? 'Enter to send · Shift+Enter for new line'
+            : 'Shift+Enter to send · Enter for new line'}
+          {' · Ctrl+N for new chat · Esc to stop'}
+        </span>
+        <button
+          className="send-mode-toggle"
+          onClick={toggleSendMode}
+          type="button"
+          title="Switch how Enter behaves"
+          aria-label={`Enter currently ${sendOnEnter ? 'sends the message' : 'inserts a new line'}. Click to switch.`}
+        >
+          {sendOnEnter ? 'Enter sends' : 'Shift+Enter sends'}
+        </button>
       </div>
     </footer>
   );
