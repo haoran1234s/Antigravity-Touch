@@ -19,12 +19,13 @@ export default function ChatContainer() {
   // The useChat hook mixes ref-backed and state-backed values in its return object.
   const {
     statusState, statusText, windows, conversations, conversationProjects, activeConversation,
-    cdpStatus, recentProjects, selectWindow, selectConversation,
+    isLoadingConversations, conversationSyncError, cdpStatus, recentProjects, selectWindow, selectConversation, loadConversations,
     startNewChat, startCdpServer, openNewWindow, closeWindowByIndex,
     networkOnline, isConnected, isMonitorConnected, isLoadingHistory, showWelcome,
     messages, currentSteps, currentResponse, isStreaming,
     sendMessage, stopStreaming, currentMode, toggleMode,
     currentAgent, agents, isLoadingAgents, fetchAgentList, switchAgent,
+    syncDesktopState, isSyncingDesktop,
     toggleArtifactPanel, artifactFiles, artifactPanelOpen,
     toggleChangesPanel, changeFiles, changesPanelOpen,
     acceptAllChanges, rejectAllChanges, isAccepting, isRejecting,
@@ -60,11 +61,14 @@ export default function ChatContainer() {
         conversations={conversations}
         conversationProjects={conversationProjects}
         activeConversation={activeConversation}
+        isLoadingConversations={isLoadingConversations}
+        conversationSyncError={conversationSyncError}
         isMonitorConnected={isMonitorConnected}
         cdpStatus={cdpStatus}
         recentProjects={recentProjects}
         onSelectWindow={selectWindow}
         onSelectConversation={selectConversation}
+        onLoadConversations={loadConversations}
         onNewChat={startNewChat}
         onStartCdp={startCdpServer}
         onOpenWindow={openNewWindow}
@@ -129,6 +133,8 @@ export default function ChatContainer() {
         isLoadingAgents={isLoadingAgents}
         onFetchAgents={fetchAgentList}
         onSwitchAgent={switchAgent}
+        onSyncDesktop={syncDesktopState}
+        isSyncingDesktop={isSyncingDesktop}
         onToggleArtifacts={toggleArtifactPanel}
         artifactCount={artifactFiles.length}
         artifactPanelOpen={artifactPanelOpen}

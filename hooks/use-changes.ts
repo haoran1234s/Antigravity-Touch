@@ -1,80 +1,88 @@
-import { useState, useCallback } from 'react';
-import useSWR from 'swr';
+import { useState, useCallback, useEffect } from 'react';
 import type { ChangeFile } from '@/lib/types';
-import { fetcher, SWR_KEYS } from '@/lib/swr-fetcher';
+import { SWR_KEYS } from '@/lib/swr-fetcher';
 
-/**
- * Polling intervals (ms).
- * We poll ALWAYS—even when the panel is closed—so the badge count stays fresh.
- */
-const POLL_FAST_MS  = 3_000;  // panel open
-const POLL_SLOW_MS  = 8_000;  // panel closed (background)
-
-/**
- * Hook for fetching and managing the "Changes Overview" data
- * scraped from the IDE's conversation panel.
- */
+/** 管理修改记录面板数据；默认从 Git 工作区读取，避免点击 PC 端 Changes 面板。 */
 export function useChanges() {
   const [changesPanelOpen, setChangesPanelOpen] = useState(false);
+  const [changeFiles, setChangeFiles] = useState<ChangeFile[]>([]);
   const [isAccepting, setIsAccepting] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
 
-  const { data, mutate } = useSWR(SWR_KEYS.changes, fetcher, {
-    refreshInterval: changesPanelOpen ? POLL_FAST_MS : POLL_SLOW_MS,
-    revalidateOnFocus: true,
-    revalidateOnReconnect: true,
-    dedupingInterval: 2000,
-  });
-
-  const changeFiles: ChangeFile[] = data?.changes || [];
+  /** 从非侵入接口拉取 Git 修改记录。 */
+  const loadChanges = useCallback(async () => {
+    const res = await fetch(SWR_KEYS.changes);
+    const data = await res.json();
+    const changes = Array.isArray(data?.changes) ? data.changes : [];
+    setChangeFiles(changes);
+    return data;
+  }, []);
 
   const toggleChangesPanel = useCallback(() => {
     setChangesPanelOpen(prev => !prev);
   }, []);
 
-  /**
-   * Accept all file changes by clicking the IDE's "Accept all" button.
-   */
+  useEffect(() => {
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        if (!disposed) await loadChanges();
+      } catch {
+        // 修改记录刷新失败不影响聊天主流程。
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(refresh, 8000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [loadChanges]);
+
+  useEffect(() => {
+    if (changesPanelOpen) {
+      void loadChanges();
+    }
+  }, [changesPanelOpen, loadChanges]);
+
+  /** 点击 IDE 的 Accept all 按钮接受全部修改。 */
   const acceptAllChanges = useCallback(async () => {
     setIsAccepting(true);
     try {
       const res = await fetch('/api/v1/changes/accept-all', { method: 'POST' });
       const result = await res.json();
-      // Refresh the changes list after accepting
-      await new Promise(r => setTimeout(r, 500));
-      await mutate();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await loadChanges();
       return result;
     } catch (e: any) {
       return { success: false, error: e.message };
     } finally {
       setIsAccepting(false);
     }
-  }, [mutate]);
+  }, [loadChanges]);
 
-  /**
-   * Reject all file changes by clicking the IDE's "Reject all" button.
-   */
+  /** 点击 IDE 的 Reject all 按钮拒绝全部修改。 */
   const rejectAllChanges = useCallback(async () => {
     setIsRejecting(true);
     try {
       const res = await fetch('/api/v1/changes/reject-all', { method: 'POST' });
       const result = await res.json();
-      // Refresh the changes list after rejecting
-      await new Promise(r => setTimeout(r, 500));
-      await mutate();
+      await new Promise(resolve => setTimeout(resolve, 500));
+      await loadChanges();
       return result;
     } catch (e: any) {
       return { success: false, error: e.message };
     } finally {
       setIsRejecting(false);
     }
-  }, [mutate]);
+  }, [loadChanges]);
 
   return {
     changeFiles,
     changesPanelOpen,
     toggleChangesPanel,
-    loadChanges: mutate,  // exposed so SSE events can trigger an immediate refresh
+    loadChanges,
     acceptAllChanges,
     rejectAllChanges,
     isAccepting,

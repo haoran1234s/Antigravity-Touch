@@ -11,10 +11,15 @@
  *   Windows: %APPDATA%/Antigravity/User/workspaceStorage/
  */
 
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs';
-import { join, basename } from 'path';
-import { homedir } from 'os';
 import { logger } from '../logger';
+
+type RuntimeFs = typeof import('fs');
+type RuntimePath = typeof import('path');
+type RuntimeOs = typeof import('os');
+
+const getRuntimeFs = (): RuntimeFs => eval('require')('fs');
+const getRuntimePath = (): RuntimePath => eval('require')('path');
+const getRuntimeOs = (): RuntimeOs => eval('require')('os');
 
 export interface RecentProject {
   /** Absolute filesystem path to the project directory */
@@ -38,24 +43,96 @@ const getRuntimePlatform = (): string => {
   return (process as any)[p + f] || 'unknown';
 };
 
-/**
- * Resolve the Antigravity workspaceStorage directory based on the OS.
- *
- * Uses a resolver-map with a runtime-resolved key so Turbopack cannot
- * dead-code-eliminate any platform branch at build time.
- */
-function getWorkspaceStoragePath(): string {
-  const home = homedir();
-  const platform = getRuntimePlatform();
+const getRuntimeEnv = (): NodeJS.ProcessEnv => {
+  const proc = eval('process') as typeof process;
+  return proc?.env || {};
+};
 
-  const resolvers: Record<string, () => string> = {
-    win32:  () => join(process.env.APPDATA || join(home, 'AppData', 'Roaming'), 'Antigravity', 'User', 'workspaceStorage'),
-    darwin: () => join(home, 'Library', 'Application Support', 'Antigravity', 'User', 'workspaceStorage'),
-    linux:  () => join(process.env.XDG_CONFIG_HOME || join(home, '.config'), 'Antigravity', 'User', 'workspaceStorage'),
+function compactUnique(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+/**
+ * 解析可能的 Antigravity 工作区历史目录。
+ *
+ * 同一台 Windows 机器上可能同时存在 `Antigravity` 和 `Antigravity IDE`
+ * 配置目录；移动端项目列表必须跟 PC 左侧项目来源保持一致，所以这里读取
+ * 所有候选 workspaceStorage，再按真实 mtime 合并排序。
+ */
+function getWorkspaceStoragePaths(): string[] {
+  const { join } = getRuntimePath();
+  const home = getRuntimeOs().homedir();
+  const platform = getRuntimePlatform();
+  const env = getRuntimeEnv();
+  const appData = env.APPDATA || join(home, 'AppData', 'Roaming');
+  const localAppData = env.LOCALAPPDATA || join(home, 'AppData', 'Local');
+  const xdgConfig = env.XDG_CONFIG_HOME || join(home, '.config');
+
+  const resolvers: Record<string, () => string[]> = {
+    win32: () => [
+      join(appData, 'Antigravity IDE', 'User', 'workspaceStorage'),
+      join(appData, 'Antigravity', 'User', 'workspaceStorage'),
+      join(localAppData, 'Google', 'Antigravity', 'User', 'workspaceStorage'),
+      join(localAppData, 'Google', 'Antigravity', 'User Data', 'Default', 'workspaceStorage'),
+    ],
+    darwin: () => [
+      join(home, 'Library', 'Application Support', 'Antigravity IDE', 'User', 'workspaceStorage'),
+      join(home, 'Library', 'Application Support', 'Antigravity', 'User', 'workspaceStorage'),
+    ],
+    linux: () => [
+      join(xdgConfig, 'Antigravity IDE', 'User', 'workspaceStorage'),
+      join(xdgConfig, 'Antigravity', 'User', 'workspaceStorage'),
+    ],
   };
 
   const resolve = resolvers[platform] || resolvers.linux;
-  return resolve();
+  return compactUnique(resolve());
+}
+
+function readWorkspaceProject(storagePath: string, dirName: string): RecentProject | null {
+  const { existsSync, readFileSync, statSync } = getRuntimeFs();
+  const { basename, join } = getRuntimePath();
+  const wsJsonPath = join(storagePath, dirName, 'workspace.json');
+  if (!existsSync(wsJsonPath)) return null;
+
+  try {
+    const raw = readFileSync(wsJsonPath, 'utf-8');
+    const data = JSON.parse(raw);
+    const folderUri: string | undefined = data.folder;
+
+    if (!folderUri || folderUri.startsWith('vscode-remote://')) return null;
+
+    let fsPath: string;
+    if (folderUri.startsWith('file://')) {
+      fsPath = decodeURIComponent(new URL(folderUri).pathname);
+      if (/^\/[A-Za-z]:/.test(fsPath)) {
+        fsPath = fsPath.substring(1);
+      }
+    } else {
+      fsPath = folderUri;
+    }
+
+    if (fsPath.includes('/playground/') || fsPath.includes('\\playground\\')) return null;
+    if (fsPath.includes('/.next/standalone') || fsPath.includes('\\.next\\standalone')) return null;
+
+    const targetStat = statSync(fsPath);
+    if (!targetStat.isDirectory()) return null;
+
+    const dirPath = join(storagePath, dirName);
+    const dirStat = statSync(dirPath);
+
+    return {
+      path: fsPath,
+      name: basename(fsPath),
+      lastOpened: dirStat.mtime.toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isRecentProject(value: RecentProject | null): value is RecentProject {
+  return value !== null;
 }
 
 /**
@@ -67,80 +144,26 @@ function getWorkspaceStoragePath(): string {
  *  - Directories that no longer exist on disk
  */
 export function getRecentProjects(limit: number = 15): RecentProject[] {
-  const storagePath = getWorkspaceStoragePath();
+  const { existsSync, readdirSync } = getRuntimeFs();
+  const storagePaths = getWorkspaceStoragePaths();
+  const existingStoragePaths = storagePaths.filter(existsSync);
 
-  if (!existsSync(storagePath)) {
-    logger.warn(`[RecentProjects] Workspace storage not found at: ${storagePath}`);
+  if (existingStoragePaths.length === 0) {
+    logger.warn(`[RecentProjects] 未找到 Antigravity workspaceStorage: ${storagePaths.join(' | ')}`);
     return [];
   }
 
-  const entries: RecentProject[] = [];
-
-  try {
-    const dirs = readdirSync(storagePath, { withFileTypes: true });
-
-    for (const dir of dirs) {
-      if (!dir.isDirectory()) continue;
-
-      const wsJsonPath = join(storagePath, dir.name, 'workspace.json');
-      if (!existsSync(wsJsonPath)) continue;
-
-      try {
-        const raw = readFileSync(wsJsonPath, 'utf-8');
-        const data = JSON.parse(raw);
-        const folderUri: string | undefined = data.folder;
-
-        if (!folderUri) continue;
-
-        // Skip remote workspaces
-        if (folderUri.startsWith('vscode-remote://')) continue;
-
-        // Extract the filesystem path from file:// URI
-        let fsPath: string;
-        if (folderUri.startsWith('file://')) {
-          fsPath = decodeURIComponent(new URL(folderUri).pathname);
-          // Strip leading / from Windows-style drive paths like /C:/Users/...
-          // Uses a regex test instead of process.platform check to avoid
-          // Turbopack DCE (and because this pattern only appears in Windows URIs).
-          if (/^\/[A-Za-z]:/.test(fsPath)) {
-            fsPath = fsPath.substring(1);
-          }
-        } else {
-          fsPath = folderUri;
-        }
-
-        // Skip playground and proxy build-output directories. The standalone
-        // server runs with cwd `.next/standalone`; if Antigravity records that
-        // as a recent workspace, auto-recovery can reopen the build directory
-        // and lock `.next/standalone`, breaking future rebuilds on Windows.
-        if (fsPath.includes('/playground/') || fsPath.includes('\\playground\\')) continue;
-        if (fsPath.includes('/.next/standalone') || fsPath.includes('\\.next\\standalone')) continue;
-
-        // Skip directories that no longer exist
-        try {
-          const s = statSync(fsPath);
-          if (!s.isDirectory()) continue;
-        } catch {
-          continue; // Directory doesn't exist anymore
-        }
-
-        // Use the workspace storage directory's mtime as lastOpened
-        const dirPath = join(storagePath, dir.name);
-        const dirStat = statSync(dirPath);
-
-        entries.push({
-          path: fsPath,
-          name: basename(fsPath),
-          lastOpened: dirStat.mtime.toISOString(),
-        });
-      } catch {
-        // Skip malformed workspace.json files
-      }
+  const entries = existingStoragePaths.flatMap((storagePath) => {
+    try {
+      return readdirSync(storagePath, { withFileTypes: true })
+        .filter(dir => dir.isDirectory())
+        .map(dir => readWorkspaceProject(storagePath, dir.name))
+        .filter(isRecentProject);
+    } catch (e: any) {
+      logger.error(`[RecentProjects] 读取 workspaceStorage 失败: ${e.message}`);
+      return [];
     }
-  } catch (e: any) {
-    logger.error(`[RecentProjects] Failed to read workspace storage: ${e.message}`);
-    return [];
-  }
+  });
 
   // Sort by lastOpened descending (most recent first)
   entries.sort((a, b) => new Date(b.lastOpened).getTime() - new Date(a.lastOpened).getTime());

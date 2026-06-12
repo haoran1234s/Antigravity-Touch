@@ -37,6 +37,7 @@ export function useChat() {
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
   const [isAgentBusy, setIsAgentBusy] = useState(false);
   const [isMonitorConnected, setIsMonitorConnected] = useState(false);
+  const [isSyncingDesktop, setIsSyncingDesktop] = useState(false);
 
   // ── Network Online/Offline detection (browser-native events) ──
   const [networkOnline, setNetworkOnline] = useState(true);
@@ -133,11 +134,11 @@ export function useChat() {
     },
   });
 
-  // Imperative fetchHistory — triggers SWR revalidation
-  const fetchHistory = useCallback(() => {
+  // 手动刷新历史记录，并在加载期间清空当前消息。
+  const fetchHistory = useCallback(async () => {
     setIsLoadingHistory(true);
-    setMessages([]); // Clear existing messages immediately
-    mutateHistory();
+    setMessages([]);
+    await mutateHistory();
   }, [mutateHistory]);
 
   const {
@@ -178,15 +179,16 @@ export function useChat() {
   // Refresh artifact and changes data when a conversation switch completes
   // (but don't auto-open the panel — let the user decide)
   const handleConversationSwitched = useCallback(() => {
-    loadArtifacts();
-    loadChanges();
-  }, [loadArtifacts, loadChanges]);
+    setShowWelcome(false);
+  }, []);
 
   const {
     windows,
     conversations,
     conversationProjects,
     activeConversation,
+    isLoadingConversations,
+    conversationSyncError,
     cdpStatus,
     recentProjects,
     loadWindows,
@@ -518,9 +520,8 @@ export function useChat() {
     } catch { /* ignore */ }
   }, []);
 
-  // ── Passive IDE Monitor ──
-  // Detects changes made directly in the IDE (mode switches, messages sent
-  // from the IDE, agent activity started/stopped externally).
+  // ── 被动 IDE 监控 ──
+  // 只读监听 PC 端状态变化，同步消息、模式和 Agent 运行状态。
   const isStreamingRef = useRef(isStreaming);
   isStreamingRef.current = isStreaming;
 
@@ -528,8 +529,8 @@ export function useChat() {
     autoConnect: true,
     onActivityStart: () => {
       setIsAgentBusy(true);
-      // controllerRef is only set for mobile-originated /chat/stream runs.
-      // If the desktop IDE starts working directly, mirror it as a live mobile stream.
+      // controllerRef 只在手机端主动发起 /chat/stream 时存在。
+      // 如果 PC 端直接开始工作，手机端仅镜像为实时流状态。
       if (!controllerRef.current) {
         if (!isStreamingRef.current) {
           setShowWelcome(false);
@@ -547,19 +548,18 @@ export function useChat() {
       setIsAgentBusy(false);
       if (!controllerRef.current) {
         finalizeObservedAgentMessage();
+        void mutateHistory();
+        void loadArtifacts();
+        void loadChanges();
+        void refreshGit();
         setStatusState('connected');
         setStatusText('Agent');
-        mutateHistory();
-        loadConversations();
-        loadArtifacts();
-        loadChanges();
       }
     },
     onTurnChange: () => {
       if (!controllerRef.current) {
         setShowWelcome(false);
-        mutateHistory();
-        loadConversations();
+        void mutateHistory();
       }
     },
     onModeChange: ({ newMode }) => {
@@ -581,17 +581,21 @@ export function useChat() {
         }
       }
       if ((data as any).activeConversation) {
-        loadConversations();
+        void mutateHistory();
+        void loadArtifacts();
+        void loadChanges();
+        void refreshGit();
       }
     },
     onConversationChange: () => {
       if (controllerRef.current) return;
       finalizeObservedAgentMessage();
       setShowWelcome(false);
-      fetchHistory();
-      loadConversations();
-      loadArtifacts();
-      loadChanges();
+      void fetchHistory();
+      void loadConversations();
+      void loadArtifacts();
+      void loadChanges();
+      void refreshGit();
     },
     onEvent: (event) => {
       if (!controllerRef.current && (event.type === 'tool_call' || event.type === 'response' || event.type === 'thinking' || event.type === 'hitl' || event.type === 'notification')) {
@@ -608,8 +612,27 @@ export function useChat() {
     setIsMonitorConnected(isMonitoring);
   }, [isMonitoring]);
 
-  // ── No more large init useEffect! ──
-  // SWR hooks above auto-fetch on mount. We only need the scroll effect.
+  const syncDesktopState = useCallback(async () => {
+    setIsSyncingDesktop(true);
+    setStatusState('syncing');
+    setStatusText('同步 PC...');
+    try {
+      await Promise.allSettled([
+        mutateMode(),
+        mutateAgent(),
+        loadConversations(),
+        fetchHistory(),
+        loadArtifacts(),
+        loadChanges(),
+        refreshGit(),
+      ]);
+      setStatusState('connected');
+      setStatusText('Agent');
+    } finally {
+      setIsSyncingDesktop(false);
+    }
+  }, [mutateMode, mutateAgent, loadConversations, fetchHistory, loadArtifacts, loadChanges, refreshGit]);
+
   useEffect(scrollToBottom, [messages, currentSteps, currentResponse, scrollToBottom]);
 
   return {
@@ -620,13 +643,13 @@ export function useChat() {
     gitStatus, gitPanelOpen, gitChangedCount, toggleGitPanel, refreshGit,
     workspaceTree, workspacePanelOpen, workspaceLoading, toggleWorkspacePanel, refreshWorkspace,
     currentMode, currentAgent, agents, isLoadingAgents,
-    cdpStatus, recentProjects,
-    isAgentBusy, isMonitorConnected,
+    cdpStatus, recentProjects, isLoadingConversations, conversationSyncError,
+    isAgentBusy, isMonitorConnected, isSyncingDesktop,
     networkOnline,
     sendMessage, stopStreaming, startNewChat, approve, reject,
-    selectWindow, selectConversation, toggleArtifactPanel, openArtifactPanel,
+    selectWindow, selectConversation, loadConversations, toggleArtifactPanel, openArtifactPanel,
     toggleChangesPanel,
-    toggleMode, fetchAgentList, switchAgent,
+    toggleMode, fetchAgentList, switchAgent, syncDesktopState,
     startCdpServer, openNewWindow, closeWindowByIndex,
     messagesEndRef, setShowWelcome,
   };

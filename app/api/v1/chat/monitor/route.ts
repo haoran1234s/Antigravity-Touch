@@ -9,6 +9,31 @@ import type { AgentState, ToolCall } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+function createEmptyAgentState(): AgentState {
+  return {
+    isRunning: false,
+    turnCount: 0,
+    stepGroupCount: 0,
+    thinking: [],
+    toolCalls: [],
+    responses: [],
+    notifications: [],
+    error: null,
+    fileChanges: [],
+    lastTurnResponseHTML: '',
+  };
+}
+
 /**
  * GET /api/v1/chat/monitor — Passive SSE monitor endpoint.
  *
@@ -27,7 +52,15 @@ export const dynamic = 'force-dynamic';
  *  - `sync`           — periodic full state snapshot for reconciliation
  */
 export async function GET(request: NextRequest) {
-  await ensureCdpConnection();
+  try {
+    await withTimeout(ensureCdpConnection(), 3500, '连接 PC 端 CDP 超时');
+  } catch (e: any) {
+    return new Response(
+      JSON.stringify({ error: e?.message || 'PC 端 CDP 未连接' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   if (!ctx.workbenchPage) {
     return new Response(
       JSON.stringify({ error: 'Not connected to Antigravity' }),
@@ -76,13 +109,32 @@ export async function GET(request: NextRequest) {
 
       try {
         // Initial state capture
-        let prevState = await getFullAgentState(ctx);
+        let domReadBusy = false;
+        const runDomRead = <T>(work: () => Promise<T>, timeoutMs: number, message: string) => {
+          if (domReadBusy) return Promise.reject(new Error('上一轮 PC 状态读取仍在进行'));
+          domReadBusy = true;
+          let promise: Promise<T>;
+          try {
+            promise = work();
+          } catch (e) {
+            domReadBusy = false;
+            return Promise.reject(e);
+          }
+          promise.finally(() => { domReadBusy = false; }).catch(() => undefined);
+          return withTimeout(promise, timeoutMs, message);
+        };
+        const readAgentState = () => runDomRead(() => getFullAgentState(ctx), 2500, '读取 PC 状态超时');
+        const readMode = () => runDomRead(() => getAgentMode(ctx), 1000, '读取 PC 模式超时');
+        const readConversation = () => runDomRead(() => getActiveIdeConversation(ctx), 1200, '读取 PC 当前对话超时');
+
+        let prevState = await readAgentState().catch(() => createEmptyAgentState());
         let prevMode = 'unknown';
-        try { prevMode = await getAgentMode(ctx); } catch { /* ignore */ }
+        try { prevMode = await readMode(); } catch { /* ignore */ }
         let prevTurnCount = prevState.turnCount;
-        let prevConversation = await getActiveIdeConversation(ctx);
+        let prevConversation = await readConversation().catch(() => null);
         let wasRunning = prevState.isRunning;
         let syncCounter = 0;
+        let polling = false;
         const sessionToolCalls = new Map<string, ToolCall>();
 
         // Seed initial tool calls
@@ -101,13 +153,15 @@ export async function GET(request: NextRequest) {
           activeConversation: prevConversation,
         });
 
-        // Poll every 800ms (lighter than the stream's 500ms since this is passive)
+        // 串行轮询：上一轮还没完成时直接跳过，避免和会话同步抢同一个 CDP 页面。
         const interval = setInterval(async () => {
           if (closed) { clearInterval(interval); return; }
+          if (polling) return;
+          polling = true;
 
           try {
-            const currState = await getFullAgentState(ctx);
-            const currConversation = await getActiveIdeConversation(ctx);
+            const currState = await readAgentState();
+            const currConversation = await readConversation().catch(() => null);
 
             if (
               currConversation &&
@@ -169,7 +223,7 @@ export async function GET(request: NextRequest) {
 
             // ── Mode change detection ──
             try {
-              const currMode = await getAgentMode(ctx);
+              const currMode = await readMode();
               if (currMode !== prevMode) {
                 writeEvent('mode_change', {
                   prevMode,
@@ -200,8 +254,10 @@ export async function GET(request: NextRequest) {
           } catch (e: any) {
             // Transient poll errors — don't kill the stream
             console.error('[Monitor] Poll error:', e.message);
+          } finally {
+            polling = false;
           }
-        }, 800);
+        }, 1500);
 
         // Handle client disconnect
         request.signal.addEventListener('abort', () => {

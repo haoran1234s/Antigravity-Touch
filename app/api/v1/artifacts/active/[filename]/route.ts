@@ -19,6 +19,12 @@ const MIME_TYPES: Record<string, string> = {
   '.tsx': 'text/typescript; charset=utf-8',
   '.yaml': 'text/yaml; charset=utf-8',
   '.yml': 'text/yaml; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml; charset=utf-8',
 };
 
 /**
@@ -135,8 +141,9 @@ export async function GET(
 
   try {
     const ext = path.extname(resolved).toLowerCase();
-    const contentType = MIME_TYPES[ext] || 'text/plain; charset=utf-8';
-    const content = fs.readFileSync(resolved, 'utf-8');
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    // 图片和二进制文件必须原样返回，避免截图预览被 UTF-8 解码破坏。
+    const content = fs.readFileSync(resolved);
     return new NextResponse(content, {
       headers: { 'Content-Type': contentType },
     });

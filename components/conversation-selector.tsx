@@ -17,7 +17,10 @@ interface ConversationSelectorProps {
   conversations: ConversationInfo[];
   projects?: ConversationProjectGroup[];
   activeConversation: ConversationInfo | null;
+  isLoading?: boolean;
+  syncError?: string | null;
   onSelect: (conversation: ConversationInfo) => void;
+  onLoadConversations?: () => void | Promise<unknown>;
   onNewChat?: (project?: { name: string; path?: string }) => void | Promise<void>;
 }
 
@@ -148,7 +151,10 @@ export default function ConversationSelector({
   conversations,
   projects = [],
   activeConversation,
+  isLoading = false,
+  syncError = null,
   onSelect,
+  onLoadConversations,
   onNewChat,
 }: ConversationSelectorProps) {
   const [open, setOpen] = useState(false);
@@ -158,6 +164,7 @@ export default function ConversationSelector({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [pinned, setPinned] = useState<Set<string>>(new Set());
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const lastOpenSyncAtRef = useRef(0);
 
   // Persist pinned conversations so favorites float to the top of each project.
   useEffect(() => {
@@ -274,12 +281,17 @@ export default function ConversationSelector({
         }))
       : buildFallbackProjects(conversations, current);
 
-    return [...sourceProjects]
-      .filter(project => project.active || project.conversations.length > 0)
-      .sort((a, b) => {
-        if (a.active !== b.active) return a.active ? -1 : 1;
-        return a.name.localeCompare(b.name);
-      });
+    const visibleSourceProjects = sourceProjects.filter(project =>
+      projects.length > 0
+        ? project.active || !!project.path || project.conversations.length > 0
+        : project.active || project.conversations.length > 0
+    );
+    if (projects.length > 0) return visibleSourceProjects;
+
+    return [...visibleSourceProjects].sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
   }, [conversations, current, projects]);
 
   const filteredProjects = useMemo<ProjectView[]>(() => {
@@ -298,7 +310,10 @@ export default function ConversationSelector({
           conversationCount: filteredConversations.length,
         };
       })
-      .filter(project => project.conversations.length > 0);
+      .filter(project => {
+        const projectMatches = [project.name, project.path].map(normalize).some(value => value.includes(normalized));
+        return project.conversations.length > 0 || projectMatches;
+      });
   }, [groupedProjects, query]);
 
   const SHOW_LIMIT = 8;
@@ -310,6 +325,14 @@ export default function ConversationSelector({
     const visible: ProjectView[] = [];
     for (const project of filteredProjects) {
       if (remaining <= 0) break;
+      if (project.conversations.length === 0) {
+        visible.push({
+          ...project,
+          conversations: [],
+          conversationCount: project.conversationCount,
+        });
+        continue;
+      }
       const visibleConversations = project.conversations.slice(0, remaining);
       if (visibleConversations.length === 0) continue;
       visible.push({
@@ -327,6 +350,8 @@ export default function ConversationSelector({
   const visibleCount = visibleProjects.reduce((sum, project) => sum + project.conversations.length, 0);
   const hiddenCount = shouldShowAll ? 0 : Math.max(filteredCount - visibleCount, 0);
   const activeProject = groupedProjects.find(project => project.active);
+  const hasConversationData = visibleProjects.length > 0 || conversations.length > 0;
+  const showSyncLoading = isLoading && !hasConversationData;
 
   const handleSelect = (conversation: ConversationInfo) => {
     if (conversation.active || isSameConversation(current, conversation)) {
@@ -356,11 +381,23 @@ export default function ConversationSelector({
     applyCollapsed(next);
   };
 
+  const handleToggleOpen = () => {
+    const nextOpen = !open;
+    setOpen(nextOpen);
+    if (nextOpen && !isLoading) {
+      const now = Date.now();
+      const shouldRefresh = !hasConversationData || now - lastOpenSyncAtRef.current > 15_000;
+      if (!shouldRefresh) return;
+      lastOpenSyncAtRef.current = now;
+      void Promise.resolve(onLoadConversations?.()).catch(() => undefined);
+    }
+  };
+
   return (
     <div ref={wrapperRef} className={`conv-selector-wrapper ${open ? 'open' : ''}`}>
       <button
         className="conv-selector-btn"
-        onClick={() => setOpen(!open)}
+        onClick={handleToggleOpen}
         title="Switch project or conversation"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -370,14 +407,26 @@ export default function ConversationSelector({
         </svg>
         <span className="conv-selector-title">{current?.title?.substring(0, 28) || 'Projects'}</span>
         {totalCount > 1 && <span className="conv-selector-count" aria-label={`${totalCount} conversations`}>{totalCount}</span>}
+        {isLoading && <span className="wm-spinner conv-selector-spinner" aria-label="同步 PC 对话中" />}
         <svg className="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
 
-      <div className={`conv-mobile-backdrop ${open ? 'open' : ''}`} onClick={closeDropdown} aria-hidden="true" />
+      <div
+        className={`conv-mobile-backdrop ${open ? 'open' : ''}`}
+        style={open ? { opacity: 1, pointerEvents: 'auto' } : { opacity: 0, pointerEvents: 'none' }}
+        onClick={closeDropdown}
+        aria-hidden="true"
+      />
 
-      <div className={`conv-dropdown ${open ? 'open' : ''}`} role="dialog" aria-modal={isMobileLayout ? true : undefined} aria-label="Project and conversation manager">
+      <div
+        className={`conv-dropdown ${open ? 'open' : ''}`}
+        style={open ? { opacity: 1, transform: 'translateY(0) scale(1)', pointerEvents: 'auto' } : undefined}
+        role="dialog"
+        aria-modal={isMobileLayout ? true : undefined}
+        aria-label="Project and conversation manager"
+      >
         <div className="conv-dropdown-header">
           <div className="conv-dropdown-title-group">
             <div className="conv-dropdown-title-row">
@@ -435,6 +484,27 @@ export default function ConversationSelector({
           )}
         </div>
 
+        {showSyncLoading && (
+          <div className="conv-sync-loading" role="status" aria-live="polite">
+            <span className="wm-spinner" />
+            <div>
+              <span className="conv-sync-title">正在同步 PC 端对话</span>
+              <span className="conv-sync-subtitle">按 PC 左侧项目分组加载，请稍候…</span>
+            </div>
+          </div>
+        )}
+
+        {!showSyncLoading && syncError && (
+          <div className="conv-sync-warning" role="status" aria-live="polite">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <span>{syncError}</span>
+          </div>
+        )}
+
         <div className="conv-dropdown-list">
           {visibleProjects.map((project) => {
             const collapsedNow = isCollapsed(project);
@@ -486,6 +556,9 @@ export default function ConversationSelector({
 
               {!collapsedNow && (
               <div className="conv-project-conversations">
+                {project.conversations.length === 0 && (
+                  <div className="conv-project-empty">暂无此项目对话</div>
+                )}
                 {orderConversations(project.conversations).map((conversation, i) => {
                   const isCurrent = conversation.active || isSameConversation(current, conversation);
                   const pinnedNow = isPinned(conversation);

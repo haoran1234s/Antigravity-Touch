@@ -101,13 +101,13 @@ export default function ArtifactPanel({ open, onClose, activeConversation, files
     <div className={`artifact-panel ${open ? 'open' : ''}`}>
       {/* Header */}
       <div className="artifact-panel-header">
-        <button className="icon-btn" onClick={onClose} title="Close panel">
+        <button className="icon-btn" onClick={onClose} title="关闭面板">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
-        <h3>Artifacts</h3>
+        <h3>计划与产物</h3>
       </div>
 
       {/* Active conversation banner */}
@@ -117,18 +117,18 @@ export default function ArtifactPanel({ open, onClose, activeConversation, files
             {activeConversation.title || 'Untitled'}
           </div>
           <div style={{ fontSize: '10px', fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)' }}>
-            {files.length} artifact{files.length !== 1 ? 's' : ''}
+            {files.length} 个产物
           </div>
         </div>
       ) : files.length > 0 ? (
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(99,102,241,0.04)' }}>
           <div style={{ fontSize: '10px', fontFamily: "'JetBrains Mono', monospace", color: 'var(--text-muted)' }}>
-            {files.length} artifact{files.length !== 1 ? 's' : ''}
+            {files.length} 个产物
           </div>
         </div>
       ) : (
         <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-          No active conversation
+          暂无当前对话
         </div>
       )}
 
@@ -190,7 +190,7 @@ export default function ArtifactPanel({ open, onClose, activeConversation, files
           ))}
           {files.length === 0 && (
             <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-muted)', fontSize: '13px' }}>
-              No artifacts in this conversation
+              当前对话暂无计划或产物
             </div>
           )}
         </div>

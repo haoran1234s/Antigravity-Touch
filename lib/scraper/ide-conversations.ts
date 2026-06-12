@@ -19,6 +19,11 @@ export interface ActiveIdeConversationSnapshot {
   url: string;
 }
 
+export interface GetIdeConversationsOptions {
+  expandSeeAllRows?: boolean;
+  maxRows?: number;
+}
+
 const UUID_RE_SOURCE = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 
 /**
@@ -50,26 +55,6 @@ export async function getActiveIdeConversation(
           cls.includes('ml-[22px]') ||
           (cls.includes('min-h-[32px]') && cls.includes('justify-between'))
         );
-      };
-
-      const clickElement = (el: Element) => {
-        el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, view: window }));
-        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-        el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, view: window }));
-        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-      };
-
-      const expandSeeAllRows = async (root: Element) => {
-        // Sidebar project sections can collapse older chats behind "See all".
-        // Expand them before scraping so the mobile history mirrors desktop.
-        for (let pass = 0; pass < 4; pass++) {
-          const buttons = Array.from(root.querySelectorAll('[role="button"]'))
-            .filter((button) => /^see all\b/i.test(cleanText(button)));
-          if (buttons.length === 0) return;
-          for (const button of buttons) clickElement(button);
-          await new Promise((resolve) => setTimeout(resolve, 150));
-        }
       };
 
       const parseConversationButton = (button: Element | null) => {
@@ -124,7 +109,10 @@ export async function getActiveIdeConversation(
  *   sidebar grouped by project and the active item has `bg-sidebar-secondary`.
  * - Legacy side-panel UI, where conversations are inside the history dropdown.
  */
-export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConversation[]> {
+export async function getIdeConversations(
+  ctx: ProxyContext,
+  options: GetIdeConversationsOptions = {},
+): Promise<IdeConversation[]> {
   try {
     logger.info('[Scraper] Fetching conversations from IDE UI...');
 
@@ -133,8 +121,12 @@ export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConvers
       return [];
     }
 
-    const result = await ctx.workbenchPage.evaluate(async (uuidSource: string) => {
+    const result = await ctx.workbenchPage.evaluate(async (
+      uuidSource: string,
+      scrapeOptions: { expandSeeAllRows?: boolean; maxRows?: number },
+    ) => {
       const uuidRe = new RegExp(`/c/(${uuidSource})(?:[/?#]|$)`, 'i');
+      const maxRows = Math.max(20, Math.min(scrapeOptions.maxRows || 220, 500));
 
       const cleanText = (el: Element | null) => {
         if (!el) return '';
@@ -160,14 +152,14 @@ export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConvers
       };
 
       const expandSeeAllRows = async (root: Element) => {
-        // Sidebar project sections can collapse older chats behind "See all".
-        // Expand them before scraping so the mobile project list mirrors desktop.
-        for (let pass = 0; pass < 4; pass++) {
+        // 只做有上限的展开，避免项目/对话很多时一次同步长时间占用 PC 端页面。
+        const deadline = Date.now() + 900;
+        for (let pass = 0; pass < 2 && Date.now() < deadline; pass++) {
           const buttons = Array.from(root.querySelectorAll('[role="button"]'))
             .filter((button) => /^see all\b/i.test(cleanText(button)));
           if (buttons.length === 0) return;
-          for (const button of buttons) clickElement(button);
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          buttons.slice(0, 8).forEach(clickElement);
+          await new Promise((resolve) => setTimeout(resolve, 80));
         }
       };
 
@@ -181,14 +173,21 @@ export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConvers
         return { title, mtimeText };
       };
 
-      const parseProjectButton = (button: Element | null) => cleanText(button);
+      const parseProjectButton = (button: Element | null) => {
+        if (!button) return '';
+        const spans = Array.from(button.querySelectorAll('span'))
+          .map((span) => cleanText(span))
+          .filter(Boolean);
+        const name = spans.find((text) => !/^\d+$/.test(text)) || cleanText(button);
+        return name.replace(/\s+\d+$/, '').trim();
+      };
 
       const routeId = location.href.match(uuidRe)?.[1] || null;
 
       // ── Antigravity 2.x full-page sidebar ───────────────────────────────
       const sidebar = document.querySelector('[role="navigation"][aria-label="Sidebar"]');
       if (sidebar) {
-        await expandSeeAllRows(sidebar);
+        if (scrapeOptions.expandSeeAllRows) await expandSeeAllRows(sidebar);
 
         const sections = Array.from(sidebar.querySelectorAll('div'))
           .filter((el) => (el.getAttribute('class') || '').includes('group/section'));
@@ -210,6 +209,7 @@ export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConvers
           const projectName = parseProjectButton(projectButton || null) || undefined;
 
           for (const button of buttons.filter(isConversationButton)) {
+            if (rows.length >= maxRows) break;
             const { title, mtimeText } = parseConversationButton(button);
             if (!title || /^see all\b/i.test(title)) continue;
             const cls = button.getAttribute('class') || '';
@@ -227,6 +227,7 @@ export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConvers
               url: active ? location.href : undefined,
             });
           }
+          if (rows.length >= maxRows) break;
         }
 
         if (rows.length > 0) {
@@ -285,7 +286,10 @@ export async function getIdeConversations(ctx: ProxyContext): Promise<IdeConvers
       );
 
       return { rows, activeTitle, source: 'legacy' };
-    }, UUID_RE_SOURCE);
+    }, UUID_RE_SOURCE, {
+      expandSeeAllRows: options.expandSeeAllRows ?? false,
+      maxRows: options.maxRows ?? 220,
+    });
 
     if (result?.error && !result?.activeTitle) {
       throw new Error(`Failed to scrape IDE conversations: ${result.error}`);

@@ -19,11 +19,14 @@ interface HeaderProps {
   conversations: ConversationInfo[];
   conversationProjects: ConversationProjectGroup[];
   activeConversation: ConversationInfo | null;
+  isLoadingConversations: boolean;
+  conversationSyncError?: string | null;
   isMonitorConnected: boolean;
   cdpStatus: CdpStatus;
   recentProjects: RecentProject[];
   onSelectWindow: (idx: number) => void;
   onSelectConversation: (conversation: ConversationInfo) => void;
+  onLoadConversations: () => void | Promise<unknown>;
   onNewChat: (project?: NewChatTarget) => void | Promise<void>;
   onStartCdp: (projectDir?: string, killExisting?: boolean) => Promise<any>;
   onOpenWindow: (projectDir: string) => Promise<any>;
@@ -32,12 +35,13 @@ interface HeaderProps {
 
 export default function Header({
   statusState, statusText, windows, conversations, conversationProjects, activeConversation,
-  isMonitorConnected, cdpStatus, recentProjects, onSelectWindow, onSelectConversation, onNewChat,
+  isLoadingConversations, conversationSyncError, isMonitorConnected, cdpStatus, recentProjects, onSelectWindow, onSelectConversation, onLoadConversations, onNewChat,
   onStartCdp, onOpenWindow, onCloseWindow,
 }: HeaderProps) {
   const [windowOpen, setWindowOpen] = useState(false);
   const [newDirPath, setNewDirPath] = useState('');
   const [isOpening, setIsOpening] = useState(false);
+  const [openingProjectPath, setOpeningProjectPath] = useState<string | null>(null);
   const [isStartingCdp, setIsStartingCdp] = useState(false);
   const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [pendingClose, setPendingClose] = useState<{ idx: number; targetId?: string; title: string } | null>(null);
@@ -169,7 +173,10 @@ export default function Header({
           conversations={conversations}
           projects={conversationProjects}
           activeConversation={activeConversation}
+          isLoading={isLoadingConversations}
+          syncError={conversationSyncError}
           onSelect={onSelectConversation}
+          onLoadConversations={onLoadConversations}
           onNewChat={onNewChat}
         />
 
@@ -190,7 +197,10 @@ export default function Header({
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </button>
-          <div className={`window-dropdown ${windowOpen ? 'open' : ''}`}>
+          <div
+            className={`window-dropdown ${windowOpen ? 'open' : ''}`}
+            style={windowOpen ? { opacity: 1, transform: 'translateY(0) scale(1)', pointerEvents: 'auto' } : undefined}
+          >
             {/* CDP Status Bar */}
             <div className="wm-cdp-status">
               <div className="wm-cdp-info">
@@ -253,9 +263,10 @@ export default function Header({
                 {recentProjects.map(p => (
                   <button
                     key={p.path}
-                    className="wm-recent-item"
+                    className={`wm-recent-item ${openingProjectPath === p.path ? 'loading' : ''}`}
                     onClick={async () => {
                       setIsOpening(true);
+                      setOpeningProjectPath(p.path);
                       setActionMessage(null);
                       try {
                         const result = await onOpenWindow(p.path);
@@ -267,14 +278,19 @@ export default function Header({
                         setActionMessage({ text: 'Failed to open', type: 'error' });
                       } finally {
                         setIsOpening(false);
+                        setOpeningProjectPath(null);
                       }
                     }}
                     disabled={isOpening}
                     title={p.path}
                   >
-                    <svg className="wm-recent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                    </svg>
+                    {openingProjectPath === p.path ? (
+                      <span className="wm-spinner" />
+                    ) : (
+                      <svg className="wm-recent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                    )}
                     <div className="wm-recent-info">
                       <span className="wm-recent-name">{p.name}</span>
                       <span className="wm-recent-path">{p.path}</span>

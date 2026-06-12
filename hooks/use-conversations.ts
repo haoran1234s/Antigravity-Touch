@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 import type { WindowInfo, ConversationInfo, ConversationProjectGroup } from '@/lib/types';
 import { fetcher, SWR_KEYS } from '@/lib/swr-fetcher';
@@ -17,8 +17,34 @@ export interface RecentProject {
 
 const API_BASE = '/api/v1';
 const SELECTED_CONVERSATION_KEY = 'antigravity-mobile:selected-conversation:v1';
+const CONVERSATIONS_IDE_KEY = `${SWR_KEYS.conversations}?source=ide&timeoutMs=6500`;
+const CONVERSATIONS_SYNC_TIMEOUT_MS = 16000;
 
 type ConversationSelection = string | Partial<Pick<ConversationInfo, 'title' | 'index' | 'id' | 'projectName' | 'projectPath'>>;
+
+interface ConversationsResponse {
+  conversations?: ConversationInfo[];
+  projects?: ConversationProjectGroup[];
+  source?: string;
+  cdpConnected?: boolean;
+  stale?: boolean;
+  error?: string | null;
+}
+
+async function fetchConversationsWithTimeout(url: string): Promise<ConversationsResponse> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CONVERSATIONS_SYNC_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      headers: { 'Cache-Control': 'no-cache' },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`PC 端对话同步失败：HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 function getSelectionParts(selection: ConversationSelection) {
   return {
@@ -89,9 +115,28 @@ export function useConversations(
     error: cdpData?.error ?? null,
   };
 
-  const { data: convsData, mutate: mutateConversations } = useSWR<{ conversations?: ConversationInfo[]; projects?: ConversationProjectGroup[] }>(
-    SWR_KEYS.conversations, fetcher, { revalidateOnFocus: true }
+  const {
+    data: convsData,
+    mutate: mutateConversations,
+    isValidating: isValidatingConversations,
+    error: conversationsFetchError,
+  } = useSWR<ConversationsResponse>(
+    CONVERSATIONS_IDE_KEY,
+    fetchConversationsWithTimeout,
+    {
+      dedupingInterval: 6000,
+      errorRetryCount: 1,
+      revalidateOnFocus: true,
+    },
   );
+  const [isLoadingConversations, setIsLoadingConversations] = useState(false);
+  const conversationLoadSeqRef = useRef(0);
+  const conversationLoadPromiseRef = useRef<Promise<ConversationsResponse> | null>(null);
+  const conversationSnapshotRef = useRef<{
+    conversations: ConversationInfo[];
+    projects: ConversationProjectGroup[];
+    hasData: boolean;
+  }>({ conversations: [], projects: [], hasData: false });
   const conversations: ConversationInfo[] = useMemo(
     () => convsData?.conversations || [],
     [convsData?.conversations],
@@ -100,6 +145,20 @@ export function useConversations(
     () => convsData?.projects || [],
     [convsData?.projects],
   );
+  const conversationSyncError = useMemo(() => {
+    if (conversationsFetchError) {
+      return conversationsFetchError instanceof Error
+        ? conversationsFetchError.message
+        : 'PC 端对话同步失败，当前显示本地历史。';
+    }
+    if (convsData?.cdpConnected === false) {
+      return convsData.error || 'PC 端 CDP 未连接，当前显示本地历史。';
+    }
+    if (convsData?.stale && convsData.error) {
+      return convsData.error;
+    }
+    return null;
+  }, [conversationsFetchError, convsData?.cdpConnected, convsData?.error, convsData?.stale]);
   const activeConversation: ConversationInfo | null = useMemo(() => {
     return (
       conversations.find((c) => c.active) ||
@@ -113,6 +172,65 @@ export function useConversations(
     SWR_KEYS.recentProjects, fetcher, { revalidateOnFocus: true }
   );
   const recentProjects: RecentProject[] = recentData?.recentProjects || [];
+
+  useEffect(() => {
+    conversationSnapshotRef.current = {
+      conversations,
+      projects: conversationProjects,
+      hasData: Boolean(convsData && (conversations.length > 0 || conversationProjects.length > 0)),
+    };
+  }, [conversationProjects, conversations, convsData]);
+
+  const loadIdeConversations = useCallback(async () => {
+    if (conversationLoadPromiseRef.current) return conversationLoadPromiseRef.current;
+
+    const seq = conversationLoadSeqRef.current + 1;
+    conversationLoadSeqRef.current = seq;
+    const shouldShowLoading = !conversationSnapshotRef.current.hasData;
+    if (shouldShowLoading) setIsLoadingConversations(true);
+
+    let loadPromise: Promise<ConversationsResponse> | null = null;
+    loadPromise = (async () => {
+      try {
+        const data = await fetchConversationsWithTimeout(CONVERSATIONS_IDE_KEY);
+        if (seq === conversationLoadSeqRef.current) {
+          mutateConversations(data, { revalidate: false });
+        }
+        return data;
+      } catch (err) {
+        const message = err instanceof DOMException && err.name === 'AbortError'
+          ? 'PC 端对话同步超时，当前显示本地历史。'
+          : err instanceof Error
+            ? err.message
+            : 'PC 端对话同步失败，当前显示本地历史。';
+        const snapshot = conversationSnapshotRef.current;
+        const fallback: ConversationsResponse = {
+          conversations: snapshot.conversations,
+          projects: snapshot.projects,
+          source: snapshot.hasData ? 'ide' : 'brain',
+          cdpConnected: snapshot.hasData,
+          stale: snapshot.hasData,
+          error: snapshot.hasData
+            ? `${message} 已保留上次成功同步结果。`
+            : message,
+        };
+        if (seq === conversationLoadSeqRef.current) {
+          mutateConversations(fallback, { revalidate: false });
+        }
+        return fallback;
+      } finally {
+        if (conversationLoadPromiseRef.current === loadPromise) {
+          conversationLoadPromiseRef.current = null;
+        }
+        if (seq === conversationLoadSeqRef.current) {
+          setIsLoadingConversations(false);
+        }
+      }
+    })();
+
+    conversationLoadPromiseRef.current = loadPromise;
+    return loadPromise;
+  }, [mutateConversations]);
 
   // ── Mutations (POST actions) — revalidate SWR caches on success ──
 
@@ -145,12 +263,15 @@ export function useConversations(
       if (data.success) {
         mutateWindows();
         mutateCdpStatus();
+        mutateRecentProjects();
+        setTimeout(() => { void loadIdeConversations(); }, 600);
+        setTimeout(() => { void loadIdeConversations(); }, 1800);
       }
       return data;
     } catch (e: any) {
       return { success: false, message: e.message || 'Failed to open window' };
     }
-  }, [mutateWindows, mutateCdpStatus]);
+  }, [mutateWindows, mutateCdpStatus, mutateRecentProjects, loadIdeConversations]);
 
   const closeWindowByIndex = useCallback(async (index: number, targetId?: string) => {
     try {
@@ -189,12 +310,12 @@ export function useConversations(
       // Refresh conversations list for the new window — use a short delay so the
       // server has time to settle the window context before we re-fetch.
       // A second pass fires 1.5s later to catch any slower propagation.
-      setTimeout(() => mutateConversations(), 300);
-      setTimeout(() => mutateConversations(), 1500);
+      setTimeout(() => { void loadIdeConversations(); }, 300);
+      setTimeout(() => { void loadIdeConversations(); }, 1500);
       // Notify parent (for artifact sync etc.)
       onConversationSwitched?.();
     } catch { /* ignore */ }
-  }, [mutateWindows, fetchHistory, setShowWelcome, mutateConversations, onConversationSwitched]);
+  }, [mutateWindows, fetchHistory, setShowWelcome, loadIdeConversations, onConversationSwitched]);
 
   const selectConversation = useCallback(async (selection: ConversationSelection) => {
     const { title, index, id, projectName, projectPath } = getSelectionParts(selection);
@@ -240,7 +361,7 @@ export function useConversations(
           !hasUsableIndex;
 
         if (canResolveImmediately) {
-          mutateConversations();
+          loadIdeConversations();
           fetchHistory();
           onConversationSwitched?.();
           return;
@@ -251,8 +372,7 @@ export function useConversations(
           attempts++;
           try {
             // Re-fetch conversations to see if active one has switched
-            const resList = await fetch(`${API_BASE}/conversations`);
-            const dList = await resList.json();
+            const dList = await fetchConversationsWithTimeout(CONVERSATIONS_IDE_KEY);
             const convs = dList.conversations || [];
             const active = convs.find((c: any) => c.active);
             if ((active && isSameSelection(active, { ...target, id: data.activeConversationId || target.id })) || attempts > 10) {
@@ -269,7 +389,7 @@ export function useConversations(
         poll();
       }
     } catch { /* ignore */ }
-  }, [fetchHistory, setShowWelcome, mutateConversations, onConversationSwitched]);
+  }, [fetchHistory, setShowWelcome, mutateConversations, loadIdeConversations, onConversationSwitched]);
 
   useEffect(() => {
     if (didRestoreSelectionRef.current) return;
@@ -294,7 +414,7 @@ export function useConversations(
 
   // ── Expose imperative refresh functions (backwards-compatible names) ──
   const loadWindows = mutateWindows;
-  const loadConversations = mutateConversations;
+  const loadConversations = loadIdeConversations;
   const checkCdpStatus = mutateCdpStatus;
   const loadRecentProjects = mutateRecentProjects;
 
@@ -303,6 +423,8 @@ export function useConversations(
     conversations,
     conversationProjects,
     activeConversation,
+    isLoadingConversations: isLoadingConversations || (isValidatingConversations && !convsData),
+    conversationSyncError,
     cdpStatus,
     recentProjects,
     loadWindows,

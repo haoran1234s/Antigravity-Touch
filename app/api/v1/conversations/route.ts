@@ -1,12 +1,12 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { ensureCdpConnection } from '@/lib/init';
 import ctx from '@/lib/context';
 import path from 'path';
 import fs from 'fs';
-import { getIdeConversations } from '@/lib/scraper/ide-conversations';
+import { getActiveIdeConversation, getIdeConversations } from '@/lib/scraper/ide-conversations';
+import { isCdpServerActive, isProcessControlAllowed } from '@/lib/cdp/process-manager';
 import {
   extractProjectFromWindowTitle,
-  filterConversationsByWorkspace,
 } from '@/lib/scraper/workspace-filter';
 import { getRecentProjects, type RecentProject } from '@/lib/cdp/recent-projects';
 import {
@@ -19,6 +19,35 @@ export const dynamic = 'force-dynamic';
 
 const runtimeHomedir = (): string => eval('require')('os').homedir();
 const getBrainDir = () => path.join(runtimeHomedir(), '.gemini', 'antigravity', 'brain');
+const DEFAULT_IDE_SYNC_TIMEOUT_MS = 6500;
+
+let lastIdeResponse: {
+  conversations: ConversationInfo[];
+  projects: ConversationProjectGroup[];
+  source: 'ide' | 'ide+brain';
+} | null = null;
+
+function getIdeSyncTimeoutMs(request: NextRequest): number {
+  const raw = Number(request.nextUrl.searchParams.get('timeoutMs'));
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_IDE_SYNC_TIMEOUT_MS;
+  return Math.min(Math.max(raw, 2500), 10000);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+async function shouldAttemptCdpConnection(): Promise<boolean> {
+  if (isProcessControlAllowed()) return true;
+  const status = await isCdpServerActive();
+  return status.active && status.windowCount > 0;
+}
 
 function extractTitle(convDir: string): string | null {
   const taskFile = path.join(convDir, 'task.md');
@@ -79,7 +108,9 @@ function sameProjectName(a?: string | null, b?: string | null): boolean {
   const left = normalize(a);
   const right = normalize(b);
   if (!left || !right) return false;
-  return left === right || left.includes(right) || right.includes(left);
+  const leftBase = normalize(basenameFromPath(left));
+  const rightBase = normalize(basenameFromPath(right));
+  return left === right || leftBase === rightBase || left === rightBase || leftBase === right;
 }
 
 function activeProjectFromTitle(projects: RecentProject[], windowTitle?: string | null): RecentProject | null {
@@ -95,32 +126,54 @@ function conversationMatchesProject(conversation: ConversationInfo, project: Rec
   const projectName = normalize(project.name);
   const projectPath = normalize(project.path);
   const projectBase = normalize(basenameFromPath(project.path));
-  const haystack = [
+  const strongValues = [
     conversation.projectName,
     conversation.projectPath,
-    conversation.title,
-    conversation.summary,
     ...(conversation.workspacePaths || []),
   ].map(normalize).filter(Boolean);
+  const strongMatch = strongValues.some((value) => {
+    const valueBase = normalize(basenameFromPath(value));
+    return [value, valueBase].some(candidate =>
+      candidate === projectName ||
+      candidate === projectBase ||
+      candidate === projectPath
+    );
+  });
+  if (strongMatch) return true;
 
-  return haystack.some((value) =>
-    value === projectName ||
-    value === projectBase ||
-    value === projectPath ||
-    value.includes(projectName) ||
-    value.includes(projectBase) ||
-    projectName.includes(value) ||
-    projectBase.includes(value)
-  );
+  const weakValues = [conversation.title, conversation.summary].map(normalize).filter(Boolean);
+  const searchableNames = [projectName, projectBase].filter(value => value.length >= 3);
+  return weakValues.some(value => searchableNames.some(name => value.includes(name)));
+}
+
+function normalizeProjectLabel(value?: string | null): string {
+  return (value || '').replace(/\s+\d+$/, '').trim();
 }
 
 function withProject(conversation: ConversationInfo, project?: { name: string; path?: string } | null): ConversationInfo {
   if (!project) return conversation;
   return {
     ...conversation,
-    projectName: conversation.projectName || project.name,
-    projectPath: conversation.projectPath || project.path,
+    projectName: normalizeProjectLabel(project.name || conversation.projectName),
+    projectPath: project.path || conversation.projectPath,
   };
+}
+
+function resolveKnownProject(
+  project: { name?: string; path?: string } | null | undefined,
+  recentProjects: RecentProject[],
+): { name: string; path?: string } | null {
+  const projectName = normalizeProjectLabel(project?.name);
+  const projectPath = project?.path;
+  if (!projectName && !projectPath) return null;
+
+  const matched = recentProjects.find((recentProject) =>
+    sameProjectName(recentProject.name, projectName) ||
+    sameProjectName(recentProject.path, projectPath) ||
+    sameProjectName(recentProject.path, projectName)
+  );
+  if (matched) return matched;
+  return projectName ? { name: projectName, path: projectPath } : null;
 }
 
 function dedupeConversations(conversations: ConversationInfo[]): ConversationInfo[] {
@@ -153,12 +206,13 @@ function buildProjectGroups(
 ): ConversationProjectGroup[] {
   const activeConversation = currentProjectConversations.find((conversation) => conversation.active);
   const activeName =
-    activeConversation?.projectName ||
+    normalizeProjectLabel(activeConversation?.projectName) ||
     extractProjectFromWindowTitle(activeWindowTitle || undefined);
   const groups = new Map<string, ConversationProjectGroup>();
 
   const ensureGroup = (project: RecentProject | { name: string; path?: string }, active = false) => {
-    const key = project.path || project.name;
+    const resolvedProject = resolveKnownProject(project, recentProjects) || project;
+    const key = resolvedProject.path || resolvedProject.name;
     const existing = groups.get(key);
     if (existing) {
       existing.active = existing.active || active;
@@ -166,8 +220,8 @@ function buildProjectGroups(
     }
     const group: ConversationProjectGroup = {
       id: key,
-      name: project.name,
-      path: project.path,
+      name: resolvedProject.name,
+      path: resolvedProject.path,
       active,
       conversationCount: 0,
       conversations: [],
@@ -178,33 +232,34 @@ function buildProjectGroups(
 
   const activeProject = activeName
     ? recentProjects.find((project) => sameProjectName(project.name, activeName))
-      || (activeConversation?.projectName ? { name: activeConversation.projectName, path: activeConversation.projectPath } : null)
+      || resolveKnownProject({ name: activeConversation?.projectName, path: activeConversation?.projectPath }, recentProjects)
     : activeProjectFromTitle(recentProjects, activeWindowTitle);
-  for (const project of recentProjects) {
-    ensureGroup(project, sameProjectName(project.name, activeName));
-  }
+  recentProjects.forEach(project => ensureGroup(project, sameProjectName(project.name, activeName) || sameProjectName(project.path, activeConversation?.projectPath)));
   if (!activeProject && activeName) ensureGroup({ name: activeName }, true);
 
-  const activeGroup = activeProject
-    ? ensureGroup(activeProject, true)
-    : (activeName ? ensureGroup({ name: activeName }, true) : null);
+  const defaultCurrentProject = activeProject || (activeName ? { name: activeName } : null);
 
-  for (const conversation of currentProjectConversations) {
-    (activeGroup || ensureGroup({ name: conversation.projectName || 'Current project' }, true))
-      .conversations.push(withProject(conversation, activeProject));
-  }
+  currentProjectConversations.forEach((conversation) => {
+    const project = resolveKnownProject(
+      conversation.projectName
+        ? { name: conversation.projectName, path: conversation.projectPath }
+        : defaultCurrentProject,
+      recentProjects,
+    ) || { name: 'Current project' };
+    ensureGroup(project, conversation.active || sameProjectName(project.name, activeName))
+      .conversations.push(withProject(conversation, project));
+  });
 
   const other = ensureGroup({ name: 'Other history' }, false);
   for (const conversation of allBrainConversations) {
-    let target: ConversationProjectGroup | null = null;
-    for (const project of recentProjects) {
-      if (conversationMatchesProject(conversation, project)) {
-        target = ensureGroup(project, sameProjectName(project.name, activeName));
-        break;
-      }
-    }
+    let target: ConversationProjectGroup | null = recentProjects
+      .map(project => conversationMatchesProject(conversation, project)
+        ? ensureGroup(project, sameProjectName(project.name, activeName))
+        : null)
+      .find((group): group is ConversationProjectGroup => !!group) || null;
     if (!target && conversation.projectName) {
-      target = ensureGroup({ name: conversation.projectName }, sameProjectName(conversation.projectName, activeName));
+      const project = resolveKnownProject({ name: conversation.projectName, path: conversation.projectPath }, recentProjects);
+      target = ensureGroup(project || { name: normalizeProjectLabel(conversation.projectName) }, sameProjectName(conversation.projectName, activeName));
     }
     (target || other).conversations.push(conversation);
   }
@@ -218,12 +273,19 @@ function buildProjectGroups(
         conversations,
       };
     })
-    .filter((group) => group.active || group.conversations.length > 0)
+    .filter((group) =>
+      group.active ||
+      group.conversations.length > 0 ||
+      recentProjects.some(project => project.path === group.path || project.name === group.name)
+    )
     .sort((a, b) => {
-      if (a.active !== b.active) return a.active ? -1 : 1;
       const aIdx = recentProjects.findIndex(p => p.path === a.path || p.name === a.name);
       const bIdx = recentProjects.findIndex(p => p.path === b.path || p.name === b.name);
-      if (aIdx !== bIdx) return (aIdx === -1 ? Number.MAX_SAFE_INTEGER : aIdx) - (bIdx === -1 ? Number.MAX_SAFE_INTEGER : bIdx);
+      const aRank = aIdx === -1 ? (a.active ? -1 : Number.MAX_SAFE_INTEGER) : aIdx;
+      const bRank = bIdx === -1 ? (b.active ? -1 : Number.MAX_SAFE_INTEGER) : bIdx;
+      if (aRank !== bRank) return aRank - bRank;
+      if (a.name === 'Other history') return 1;
+      if (b.name === 'Other history') return -1;
       return a.name.localeCompare(b.name);
     });
 
@@ -236,12 +298,47 @@ function buildProjectGroups(
  * Active conversation = the FIRST item in the IDE history dropdown (Antigravity convention).
  * We enrich each entry with brain metadata (files, mtime, brain UUID) when available.
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const allowIdeHistoryPanel = request.nextUrl.searchParams.get('source') === 'ide';
+  const ideSyncTimeoutMs = getIdeSyncTimeoutMs(request);
   let cdpError: string | null = null;
-  try {
-    await ensureCdpConnection();
-  } catch (err: any) {
-    cdpError = err?.message || 'Unable to connect to Antigravity';
+  const canAttemptCdpConnection = await withTimeout(
+    shouldAttemptCdpConnection(),
+    1200,
+    '检测 PC 端 CDP 超时',
+  ).catch(() => false);
+
+  if (canAttemptCdpConnection) {
+    try {
+      await withTimeout(
+        ensureCdpConnection(),
+        Math.min(3000, ideSyncTimeoutMs),
+        '连接 PC 端 CDP 超时',
+      );
+    } catch (err: any) {
+      cdpError = err?.message || 'Unable to connect to Antigravity';
+    }
+  } else {
+    cdpError = 'PC 端 CDP 未连接，当前显示本地历史。';
+  }
+
+  const hasUsableWorkbenchPage = Boolean(ctx.workbenchPage && !cdpError);
+
+  if (hasUsableWorkbenchPage) {
+    try {
+      const active = await withTimeout(
+        getActiveIdeConversation(ctx),
+        Math.min(1800, ideSyncTimeoutMs),
+        '读取 PC 当前对话超时',
+      );
+      if (active?.id || active?.title) {
+        ctx.activeConversationId = active.id || ctx.activeConversationId;
+        ctx.activeTitle = active.title;
+        ctx.activeConversationSource = active.id ? 'ide' : ctx.activeConversationSource;
+      }
+    } catch {
+      // 只读同步失败时不打开历史面板，避免 PC 端界面闪动。
+    }
   }
 
   const activeWindowTitle = ctx.allWorkbenches[ctx.activeWindowIdx]?.title;
@@ -256,26 +353,55 @@ export async function GET() {
     activeId: ctx.activeConversationId,
     limit: 200,
   });
-  const brainOnlyProjects = buildProjectGroups(
-    brainConversations,
+  const activeSnapshotConversation: ConversationInfo | null = ctx.activeTitle
+    ? {
+      id: ctx.activeConversationId || '-1',
+      title: ctx.activeTitle,
+      active: true,
+      index: -1,
+      files: [],
+      mtime: new Date().toISOString(),
+      source: 'mixed',
+      projectName: extractProjectFromWindowTitle(activeWindowTitle || undefined) || activeProject?.name,
+      projectPath: activeProject?.path,
+    }
+    : null;
+  const safeConversations = dedupeConversations(
+    activeSnapshotConversation ? [activeSnapshotConversation, ...brainConversations] : brainConversations,
+  );
+  const safeProjects = buildProjectGroups(
+    safeConversations,
     allBrainConversations,
     recentProjects,
     activeWindowTitle,
   );
 
-  if (!ctx.workbenchPage) {
+  if (!hasUsableWorkbenchPage) {
     return NextResponse.json({
-      conversations: brainConversations,
-      projects: brainOnlyProjects,
+      conversations: safeConversations,
+      projects: safeProjects,
       source: 'brain',
       cdpConnected: false,
       error: cdpError,
     });
   }
 
+  if (!allowIdeHistoryPanel) {
+    return NextResponse.json({
+      conversations: safeConversations,
+      projects: safeProjects,
+      source: 'brain',
+      cdpConnected: hasUsableWorkbenchPage,
+    });
+  }
+
   try {
     // The scraper already marks index===0 as active — no additional heuristics needed.
-    const ideConversations = await getIdeConversations(ctx);
+    const ideConversations = await withTimeout(
+      getIdeConversations(ctx, { expandSeeAllRows: false, maxRows: 220 }),
+      ideSyncTimeoutMs,
+      '同步 PC 端对话超时',
+    );
 
     // Pre-calculate brain metadata to enrich IDE conversations with files/mtime/UUID
     const brainData: any[] = [];
@@ -371,9 +497,13 @@ export async function GET() {
     const seen = new Set(conversations.map(c => c.id).filter(Boolean));
     const brainOnly = scopedBrainConversations.filter((c: BrainConversationInfo) => !seen.has(c.id));
 
-    // Filter to only conversations related to the active window's project
-    const filtered = filterConversationsByWorkspace([...conversations, ...brainOnly], activeWindowTitle)
-      .map((conversation) => withProject(conversation, activeIdeProject));
+    // IDE sidebar 已经按 PC 端项目分组返回，不能再按活动窗口标题过滤；
+    // 否则移动端会缺少其他项目的对话，和 PC 左侧不一致。
+    const filtered = [...conversations, ...brainOnly].map((conversation) =>
+      conversation.projectName
+        ? { ...conversation, projectName: normalizeProjectLabel(conversation.projectName) }
+        : withProject(conversation, activeIdeProject)
+    );
     const projects = buildProjectGroups(
       filtered,
       allBrainConversations,
@@ -381,19 +511,37 @@ export async function GET() {
       activeWindowTitle,
     );
 
+    const source = brainOnly.length > 0 ? 'ide+brain' : 'ide';
+    lastIdeResponse = {
+      conversations: filtered,
+      projects,
+      source,
+    };
+
     return NextResponse.json({
       conversations: filtered,
       projects,
-      source: brainOnly.length > 0 ? 'ide+brain' : 'ide',
+      source,
       cdpConnected: true,
     });
   } catch (err: any) {
+    if (lastIdeResponse) {
+      return NextResponse.json({
+        conversations: lastIdeResponse.conversations,
+        projects: lastIdeResponse.projects,
+        source: lastIdeResponse.source,
+        cdpConnected: true,
+        stale: true,
+        error: err.message || '同步 PC 端对话超时，已显示上次成功同步结果。',
+      });
+    }
+
     return NextResponse.json({
-      conversations: brainConversations,
-      projects: brainOnlyProjects,
+      conversations: safeConversations,
+      projects: safeProjects,
       source: 'brain',
       cdpConnected: false,
-      error: err.message,
+      error: err?.message || '同步 PC 端对话失败，当前显示本地历史。',
     });
   }
 }

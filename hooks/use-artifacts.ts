@@ -1,27 +1,19 @@
 import { useState, useCallback, useEffect } from 'react';
-import useSWR from 'swr';
 import type { ArtifactFile } from '@/lib/types';
-import { fetcher, SWR_KEYS } from '@/lib/swr-fetcher';
-
-/**
- * Polling intervals (ms).
- * We poll ALWAYS—even when the panel is closed—so the badge count stays fresh.
- * When the panel is open we use a faster cadence.
- */
-const POLL_FAST_MS  = 3_000;  // panel open
-const POLL_SLOW_MS  = 8_000;  // panel closed (background)
+import { SWR_KEYS } from '@/lib/swr-fetcher';
 
 export function useArtifacts(activeConversationId?: string | null) {
   const [artifactPanelOpen, setArtifactPanelOpen] = useState(false);
+  const [artifactFiles, setArtifactFiles] = useState<ArtifactFile[]>([]);
 
-  const { data, mutate } = useSWR(SWR_KEYS.artifacts, fetcher, {
-    refreshInterval: artifactPanelOpen ? POLL_FAST_MS : POLL_SLOW_MS,
-    revalidateOnFocus: true,
-    revalidateOnReconnect: true,
-    dedupingInterval: 2000,
-  });
-
-  const artifactFiles: ArtifactFile[] = data?.files || [];
+  /** 从非侵入接口拉取计划与产物列表，不点击 PC 端 Artifacts 面板。 */
+  const loadArtifacts = useCallback(async () => {
+    const res = await fetch(SWR_KEYS.artifacts);
+    const data = await res.json();
+    const files = Array.isArray(data?.files) ? data.files : [];
+    setArtifactFiles(files);
+    return data;
+  }, []);
 
   const toggleArtifactPanel = useCallback(() => {
     setArtifactPanelOpen(prev => !prev);
@@ -31,18 +23,35 @@ export function useArtifacts(activeConversationId?: string | null) {
     setArtifactPanelOpen(true);
   }, []);
 
-  // Re-fetch when the active conversation changes
   useEffect(() => {
-    if (activeConversationId) {
-      mutate();
+    let disposed = false;
+    const refresh = async () => {
+      try {
+        if (!disposed) await loadArtifacts();
+      } catch {
+        // 产物刷新失败不影响聊天主流程。
+      }
+    };
+
+    void refresh();
+    const timer = window.setInterval(refresh, 8000);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [activeConversationId, loadArtifacts]);
+
+  useEffect(() => {
+    if (artifactPanelOpen) {
+      void loadArtifacts();
     }
-  }, [activeConversationId, mutate]);
+  }, [artifactPanelOpen, activeConversationId, loadArtifacts]);
 
   return {
     artifactFiles,
     artifactPanelOpen,
     toggleArtifactPanel,
     openArtifactPanel,
-    loadArtifacts: mutate,  // exposed so SSE events can trigger an immediate refresh
+    loadArtifacts,
   };
 }

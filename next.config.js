@@ -26,6 +26,7 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   // The app reads Antigravity runtime state from user-profile folders at
   // request time. Those folders must not be bundled into the standalone server;
   // tracing them on Windows can fail on protected junctions such as
