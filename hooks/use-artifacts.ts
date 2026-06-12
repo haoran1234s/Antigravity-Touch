@@ -17,11 +17,13 @@ export function useArtifacts(activeConversationId?: string | null) {
 
   const toggleArtifactPanel = useCallback(() => {
     setArtifactPanelOpen(prev => !prev);
-  }, []);
+    if (!artifactPanelOpen) void loadArtifacts().catch(() => {});
+  }, [artifactPanelOpen, loadArtifacts]);
 
   const openArtifactPanel = useCallback(() => {
     setArtifactPanelOpen(true);
-  }, []);
+    void loadArtifacts().catch(() => {});
+  }, [loadArtifacts]);
 
   useEffect(() => {
     let disposed = false;
@@ -40,12 +42,6 @@ export function useArtifacts(activeConversationId?: string | null) {
       window.clearInterval(timer);
     };
   }, [activeConversationId, loadArtifacts]);
-
-  useEffect(() => {
-    if (artifactPanelOpen) {
-      void loadArtifacts();
-    }
-  }, [artifactPanelOpen, activeConversationId, loadArtifacts]);
 
   return {
     artifactFiles,

@@ -91,7 +91,6 @@ export default function ChatInput({
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(SEND_ON_ENTER_KEY);
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (stored === 'false') setSendOnEnter(false);
     } catch {
       // 本地存储可能不可用。
