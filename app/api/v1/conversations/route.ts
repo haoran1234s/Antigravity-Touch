@@ -250,8 +250,14 @@ function buildProjectGroups(
       .conversations.push(withProject(conversation, project));
   });
 
+  const placedIds = new Set(
+    currentProjectConversations
+      .map((conversation) => conversation.id)
+      .filter((id) => id && !/^-?\d+$/.test(id)),
+  );
   const other = ensureGroup({ name: 'Other history' }, false);
   for (const conversation of allBrainConversations) {
+    if (conversation.id && placedIds.has(conversation.id)) continue;
     let target: ConversationProjectGroup | null = recentProjects
       .map(project => conversationMatchesProject(conversation, project)
         ? ensureGroup(project, sameProjectName(project.name, activeName))

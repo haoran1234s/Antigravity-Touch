@@ -25,20 +25,13 @@ export function isAntigravityWorkbenchTarget(target: CdpTargetLike): boolean {
   // Legacy VS Code/Electron workbench URL.
   if (url.includes('workbench.html')) return true;
 
-  // Current Antigravity builds expose the IDE through a local HTTPS app server.
-  if (
-    /^Antigravity\b/i.test(title) &&
-    /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/(?:[?#].*)?$/i.test(url)
-  ) {
-    return true;
-  }
-
-  // Antigravity 2.x updates `document.title` to the active conversation title
-  // and routes to `/c/<conversation-id>`.  In that state the page no longer has
-  // "Antigravity" in the title, but it is still the real workbench target.
-  if (
-    /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+\/(?:c\/[0-9a-f-]{36}|[?#]|$)/i.test(url)
-  ) {
+  // Current Antigravity builds expose the IDE through a local HTTPS app server
+  // (e.g. `https://127.0.0.1:46073/`).  The page can route to any client-side
+  // path — `/`, `/onboarding`, `/c/<conversation-id>`, etc. — and 2.x also
+  // rewrites `document.title` to the active conversation title, so neither the
+  // path nor the title is stable.  Any page served from the local app server on
+  // the Antigravity CDP port is the workbench.
+  if (/^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):\d+(?:\/|$)/i.test(url)) {
     return true;
   }
 
