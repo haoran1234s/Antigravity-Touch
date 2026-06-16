@@ -4,35 +4,31 @@ import {
   isDesktopSafeMode,
   isProcessControlAllowed,
 } from '@/lib/cdp/process-manager';
-import * as dns from 'dns';
+import { probeInternet } from '@/lib/net-probe';
 
 export const dynamic = 'force-dynamic';
 
-function probeNetwork(): Promise<boolean> {
-  return new Promise((resolve) => {
-    dns.lookup('dns.google', (err) => resolve(!err));
-  });
-}
-
 export async function GET() {
-  const networkOnline = await probeNetwork();
-
-  // Health checks must stay passive. Do not call ensureCdpConnection() here:
-  // that path can auto-recover by killing/restarting Antigravity, which means
-  // a phone/browser poll could unexpectedly mutate the desktop IDE.
+  // The local IDE bridge is what "connected" actually means for this tool, so
+  // check CDP unconditionally. Never gate it behind internet reachability: a
+  // LAN-only/offline machine — or one where the internet probe is blocked — is
+  // still fully functional. (Health checks stay passive: we never call
+  // ensureCdpConnection() here, which could restart the desktop IDE.)
   let cdpConnected = false;
   let cdpWindowCount = 0;
   let cdpError: string | null = null;
-  if (networkOnline) {
-    try {
-      const cdpStatus = await isCdpServerActive();
-      cdpConnected = cdpStatus.active && cdpStatus.windowCount > 0;
-      cdpWindowCount = cdpStatus.windowCount;
-      cdpError = cdpStatus.error || null;
-    } catch (e: any) {
-      cdpError = e.message;
-    }
+  try {
+    const cdpStatus = await isCdpServerActive();
+    cdpConnected = cdpStatus.active && cdpStatus.windowCount > 0;
+    cdpWindowCount = cdpStatus.windowCount;
+    cdpError = cdpStatus.error || null;
+  } catch (e: any) {
+    cdpError = e.message;
   }
+
+  // If the local IDE is reachable we are, by definition, "online" for this
+  // tool's purposes; only bother probing the internet when it isn't.
+  const networkOnline = cdpConnected ? true : await probeInternet();
 
   const status = cdpConnected ? 'ok' : networkOnline ? 'cdp_error' : 'offline';
 

@@ -10,7 +10,7 @@
  */
 
 import { EventEmitter } from 'events';
-import * as dns from 'dns';
+import { probeInternet } from './net-probe';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const INITIAL_BACKOFF_MS = 2_000;
@@ -19,9 +19,6 @@ const BACKOFF_MULTIPLIER = 1.8;
 
 /** How often (ms) to poll DNS when we're waiting for the network to come back */
 const NETWORK_POLL_MS = 3_000;
-
-/** DNS host to probe for internet connectivity */
-const PROBE_HOST = 'dns.google';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 export type TunnelState =
@@ -197,17 +194,15 @@ export class TunnelManager extends EventEmitter {
     }, delay);
   }
 
-  /** Polls DNS until the network is reachable, then resolves. */
+  /** Polls until the network is reachable, then resolves. */
   private _waitForNetwork(): Promise<void> {
     return new Promise((resolve) => {
       const check = () => {
-        dns.lookup(PROBE_HOST, (err) => {
-          if (!err) {
+        probeInternet().then((online) => {
+          if (online) {
             resolve();
-          } else {
-            if (!this.destroyed) {
-              this.networkPollTimer = setTimeout(check, NETWORK_POLL_MS);
-            }
+          } else if (!this.destroyed) {
+            this.networkPollTimer = setTimeout(check, NETWORK_POLL_MS);
           }
         });
       };

@@ -27,7 +27,7 @@ import {
 import { getRecentProjects } from './cdp/recent-projects';
 import { logger } from './logger';
 import ctx from './context';
-import * as dns from 'dns';
+import { probeInternet } from './net-probe';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
@@ -47,20 +47,28 @@ const runtimeHomedir = (): string => eval('require')('os').homedir();
 // ── Network Watchdog ─────────────────────────────────────────────────────────
 /** How often (ms) to probe for network connectivity in the watchdog */
 const WATCHDOG_INTERVAL_MS = 5_000;
-/** DNS host to probe */
-const PROBE_HOST = 'dns.google';
 
 let lastNetworkState: boolean | null = null;  // null = unknown (first run)
 let watchdogTimer: NodeJS.Timeout | null = null;
 
 /**
- * Probe network reachability via a DNS lookup.
- * Returns true if the network is up, false if down.
+ * Probe reachability for the watchdog.
+ *
+ * The only signal that matters for a local IDE bridge is whether the local CDP
+ * endpoint is reachable — if it is, we're "online" regardless of internet
+ * access. Probing a single internet host (previously `dns.google`) wrongly
+ * reported "offline" in regions where that host is blocked or on offline LANs,
+ * which made the watchdog tear down init state every 5s and never recover.
+ * We only fall back to a tolerant internet probe when the local IDE is absent.
  */
-function probeNetwork(): Promise<boolean> {
-  return new Promise((resolve) => {
-    dns.lookup(PROBE_HOST, (err) => resolve(!err));
-  });
+async function probeNetwork(): Promise<boolean> {
+  try {
+    const cdp = await isCdpServerActive();
+    if (cdp.active) return true;
+  } catch {
+    // fall through to the internet probe
+  }
+  return probeInternet();
 }
 
 /**
