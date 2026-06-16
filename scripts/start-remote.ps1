@@ -29,6 +29,42 @@ function Write-Warn([string]$Message) {
   Write-Host "WARN: $Message" -ForegroundColor Yellow
 }
 
+function Disable-ConsoleQuickEdit {
+  # Definitively prevent the Windows console "QuickEdit / Mark" deadlock.
+  #
+  # When QuickEdit is on (the Windows default), clicking anywhere in the console
+  # window puts it in selection/mark mode, which SUSPENDS any process writing to
+  # the console until the user presses Enter/Esc. That freezes the proxy server
+  # and makes every request hang ("infinite loading"). Clearing
+  # ENABLE_QUICK_EDIT_MODE means clicking the window no longer enters mark mode,
+  # so the server can never be frozen by an accidental click.
+  if ($env:OS -ne 'Windows_NT') { return }
+  try {
+    if (-not ([System.Management.Automation.PSTypeName]'AgWin.Native').Type) {
+      Add-Type -Namespace 'AgWin' -Name 'Native' -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+public static extern System.IntPtr GetStdHandle(int handle);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+public static extern bool GetConsoleMode(System.IntPtr handle, out uint mode);
+[System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError=true)]
+public static extern bool SetConsoleMode(System.IntPtr handle, uint mode);
+'@
+    }
+    $STD_INPUT_HANDLE  = -10
+    $ENABLE_QUICK_EDIT = 0x0040
+    $ENABLE_EXTENDED   = 0x0080
+    $h = [AgWin.Native]::GetStdHandle($STD_INPUT_HANDLE)
+    if ($h -eq [System.IntPtr]::Zero -or $h -eq [System.IntPtr]::new(-1)) { return }
+    [uint32]$mode = 0
+    if (-not [AgWin.Native]::GetConsoleMode($h, [ref]$mode)) { return }
+    $new = ($mode -band (-bnot $ENABLE_QUICK_EDIT)) -bor $ENABLE_EXTENDED
+    [void][AgWin.Native]::SetConsoleMode($h, $new)
+    Write-Info 'Disabled console QuickEdit (clicking this window will no longer freeze the server).'
+  } catch {
+    # Non-fatal: if the console handle is redirected/unavailable, just continue.
+  }
+}
+
 function Test-Placeholder([string]$Value) {
   if ([string]::IsNullOrWhiteSpace($Value)) { return $true }
   $trimmed = $Value.Trim()
@@ -174,6 +210,8 @@ $envPath = Join-Path $repoRoot '.env.local'
 $examplePath = Join-Path $repoRoot '.env.example'
 
 Set-Location $repoRoot
+
+Disable-ConsoleQuickEdit
 
 Write-Step "Prepare Antigravity Touch"
 Write-Info "Repo: $repoRoot"

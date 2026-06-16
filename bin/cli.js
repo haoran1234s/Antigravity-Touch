@@ -5,6 +5,7 @@ const path = require('path');
 const readline = require('readline');
 const fs = require('fs');
 const os = require('os');
+const net = require('net');
 
 // ── Colors & Formatting ─────────────────────────────────────────────────
 const c = {
@@ -589,11 +590,90 @@ function getLanIps() {
   const nets = os.networkInterfaces();
   const ips = [];
   for (const name of Object.keys(nets)) {
-    for (const net of nets[name] || []) {
-      if (net.family === 'IPv4' && !net.internal) ips.push(net.address);
+    for (const iface of nets[name] || []) {
+      if (iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
     }
   }
   return ips;
+}
+
+/**
+ * Poll a TCP port until it accepts a connection (server is ready) or we time out.
+ * We connect to 127.0.0.1 regardless of the bind host: a server bound to 0.0.0.0
+ * is reachable via loopback, and this avoids IPv6/`localhost` resolution quirks.
+ */
+function waitForPort(port, { timeoutMs = 60000, intervalMs = 300 } = {}) {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const tryOnce = () => {
+      const socket = net.connect({ host: '127.0.0.1', port: Number(port) });
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        if (ok) return resolve(true);
+        if (Date.now() >= deadline) return resolve(false);
+        setTimeout(tryOnce, intervalMs);
+      };
+      socket.once('connect', () => done(true));
+      socket.once('error', () => done(false));
+      socket.setTimeout(2000, () => done(false));
+    };
+    tryOnce();
+  });
+}
+
+/**
+ * Spawn the Next server with INHERITED stdio (no parent-side pipe).
+ *
+ * Why: routing the child's stdout/stderr through a parent pipe means that when
+ * the Windows console enters QuickEdit/mark mode (user clicks in the window) the
+ * parent stops draining the pipe, the pipe fills, and the child blocks on its
+ * next write — deadlocking the whole server so every request hangs forever
+ * ("infinite loading"). With `inherit` the child writes straight to the console,
+ * so there is no parent pipe to fill and the server keeps serving requests.
+ *
+ * Readiness is detected by polling the TCP port instead of parsing stdout.
+ */
+function launchServer({ argv, cwd, env, port, bindHost, noTunnel, email, authtoken, packageRoot, stoppedLabel = 'Server stopped.' }) {
+  const nextServer = spawn(process.execPath, argv, {
+    cwd,
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: env || process.env,
+  });
+
+  let announced = false;
+  const announce = (likely = false) => {
+    if (announced) return;
+    announced = true;
+    console.log('');
+    console.log(`  ${fmt.success('Server running on port ' + port + (likely ? ' (continuing)' : ''))}`);
+    if (!noTunnel) {
+      startTunnel({ port, email, authtoken, projectRoot: packageRoot });
+    } else {
+      printLocalOnly(port, bindHost);
+    }
+  };
+
+  // Detect readiness by polling the port (works with inherited stdio).
+  waitForPort(port, { timeoutMs: 120000 }).then((ok) => announce(!ok));
+
+  nextServer.on('close', (exitCode) => {
+    console.log(`\n  ${fmt.dim(stoppedLabel)}`);
+    process.exit(exitCode == null ? 0 : exitCode);
+  });
+
+  const cleanup = () => {
+    console.log('');
+    console.log(`  ${fmt.dim('👋 Shutting down...')}`);
+    nextServer.kill();
+    process.exit(0);
+  };
+  process.on('SIGINT', cleanup);
+  process.on('SIGTERM', cleanup);
+
+  return nextServer;
 }
 
 function startServer({ email, port, authtoken, noTunnel, host, rebuild }) {
@@ -616,85 +696,17 @@ function startServer({ email, port, authtoken, noTunnel, host, rebuild }) {
     setupStandaloneAssets();
 
     // Start the standalone server directly
-    process.stdout.write(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
+    console.log(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
 
     const standaloneDir = getStandaloneDir();
     const serverJs = path.join(standaloneDir, 'server.js');
 
-    const nextServer = spawn(process.execPath, [serverJs], {
+    launchServer({
+      argv: [serverJs],
       cwd: standaloneDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, PORT: port, HOSTNAME: bindHost },
+      port, bindHost, noTunnel, email, authtoken, packageRoot,
     });
-
-    // Removed stdout/stderr pipe to prevent Windows QuickEdit deadlock
-
-    let serverStarted = false;
-
-    nextServer.stdout.on('data', (data) => {
-      const line = data.toString();
-      if (!serverStarted && (line.includes('Ready') || line.includes('started') || line.includes(port))) {
-        serverStarted = true;
-        clearLine();
-        console.log(`  ${fmt.success('Server running on port ' + port)}`);
-
-        if (!noTunnel) {
-          startTunnel({ port, email, authtoken, projectRoot: packageRoot });
-        } else {
-          printLocalOnly(port, bindHost);
-        }
-      }
-    });
-
-    nextServer.stderr.on('data', (data) => {
-      const line = data.toString().trim();
-      if (!line) return;
-      // Suppress expected CDP auto-recovery noise — these are handled internally
-      if (line.includes('[CDP]') || line.includes('[CDP Init]')) {
-        // Only show the final "all attempts failed" message
-        if (line.includes('All') && line.includes('recovery attempts failed')) {
-          console.log(`  ${fmt.warn(line)}`);
-        }
-        return;
-      }
-      if (line.includes('[ProcessManager]')) {
-         console.log(`  ${fmt.dim('[CDP]')} ${line}`);
-         return;
-      }
-      if (line.toLowerCase().includes('error')) {
-        console.log(`  ${fmt.dim('[next]')} ${line}`);
-      }
-    });
-
-    nextServer.on('close', (exitCode) => {
-      console.log(`\n  ${fmt.dim('Server stopped.')}`);
-      process.exit(exitCode);
-    });
-
-    // ── Graceful shutdown ─────────────────────────────────────────
-    const cleanup = () => {
-      console.log('');
-      console.log(`  ${fmt.dim('👋 Shutting down...')}`);
-      nextServer.kill();
-      process.exit(0);
-    };
-
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
-
-    // Fallback: if we don't detect "Ready", start tunnel after timeout
-    setTimeout(() => {
-      if (!serverStarted) {
-        serverStarted = true;
-        clearLine();
-        console.log(`  ${fmt.success('Server likely running on port ' + port)}`);
-        if (!noTunnel) {
-          startTunnel({ port, email, authtoken, projectRoot: packageRoot });
-        } else {
-          printLocalOnly(port, bindHost);
-        }
-      }
-    }, 8000);
 
   } else {
     // ── Build-from-source mode (no cached build, or source changed) ──
@@ -707,25 +719,19 @@ function startServer({ email, port, authtoken, noTunnel, host, rebuild }) {
 
     const nextEntry = path.join(packageRoot, 'node_modules', 'next', 'dist', 'bin', 'next');
 
-    // Build
-    process.stdout.write(`  ${fmt.dim('▸ Building Next.js app...')}`);
+    // Build — inherit stdio so progress/errors print straight to the console
+    // (no parent-side pipe that QuickEdit could deadlock).
+    console.log(`  ${fmt.dim('▸ Building Next.js app...')}`);
 
     const build = spawn(process.execPath, [nextEntry, 'build'], {
       cwd: packageRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'inherit', 'inherit'],
     });
 
-    let buildOutput = '';
-    build.stdout.on('data', (data) => { buildOutput += data.toString(); });
-    build.stderr.on('data', (data) => { buildOutput += data.toString(); });
-
     build.on('close', (code) => {
-      clearLine();
-
       if (code !== 0) {
-        console.log(`  ${fmt.error('Build failed!')}`);
         console.log('');
-        console.log(buildOutput);
+        console.log(`  ${fmt.error('Build failed! See the output above.')}`);
         process.exit(1);
       }
 
@@ -737,143 +743,25 @@ function startServer({ email, port, authtoken, noTunnel, host, rebuild }) {
         const standaloneDir = getStandaloneDir();
         const serverJs = path.join(standaloneDir, 'server.js');
 
-        process.stdout.write(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
+        console.log(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
 
-        const nextServer = spawn(process.execPath, [serverJs], {
+        launchServer({
+          argv: [serverJs],
           cwd: standaloneDir,
-          stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...process.env, PORT: port, HOSTNAME: bindHost },
+          port, bindHost, noTunnel, email, authtoken, packageRoot,
         });
-
-        // Removed stdout/stderr pipe to prevent Windows QuickEdit deadlock
-
-        let serverStarted = false;
-
-        nextServer.stdout.on('data', (data) => {
-          const line = data.toString();
-          if (!serverStarted && (line.includes('Ready') || line.includes('started') || line.includes(port))) {
-            serverStarted = true;
-            clearLine();
-            console.log(`  ${fmt.success('Server running on port ' + port)}`);
-
-            if (!noTunnel) {
-              startTunnel({ port, email, authtoken, projectRoot: packageRoot });
-            } else {
-              printLocalOnly(port, bindHost);
-            }
-          }
-        });
-
-        nextServer.stderr.on('data', (data) => {
-          const line = data.toString().trim();
-          if (!line) return;
-          if (line.includes('[CDP]') || line.includes('[CDP Init]') || line.includes('[ProcessManager]')) {
-            if (line.includes('All') && line.includes('recovery attempts failed')) {
-              console.log(`  ${fmt.warn(line)}`);
-            }
-            return;
-          }
-          if (line && line.toLowerCase().includes('error')) {
-            console.log(`  ${fmt.dim('[next]')} ${line}`);
-          }
-        });
-
-        nextServer.on('close', (exitCode) => {
-          console.log(`\n  ${fmt.dim('Server stopped.')}`);
-          process.exit(exitCode);
-        });
-
-        const cleanup = () => {
-          console.log('');
-          console.log(`  ${fmt.dim('👋 Shutting down...')}`);
-          nextServer.kill();
-          process.exit(0);
-        };
-
-        process.on('SIGINT', cleanup);
-        process.on('SIGTERM', cleanup);
-
-        setTimeout(() => {
-          if (!serverStarted) {
-            serverStarted = true;
-            clearLine();
-            console.log(`  ${fmt.success('Server likely running on port ' + port)}`);
-            if (!noTunnel) {
-              startTunnel({ port, email, authtoken, projectRoot: packageRoot });
-            } else {
-              printLocalOnly(port, bindHost);
-            }
-          }
-        }, 8000);
-
       } else {
         // Fallback: use next start
-        process.stdout.write(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
+        console.log(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
 
-        const nextServer = spawn(process.execPath, [nextEntry, 'start', '-p', port, '-H', bindHost], {
+        launchServer({
+          argv: [nextEntry, 'start', '-p', String(port), '-H', bindHost],
           cwd: packageRoot,
-          stdio: ['ignore', 'pipe', 'pipe'],
+          env: process.env,
+          port, bindHost, noTunnel, email, authtoken, packageRoot,
+          stoppedLabel: 'Next.js server stopped.',
         });
-
-        // Removed stdout/stderr pipe to prevent Windows QuickEdit deadlock
-
-        let serverStarted = false;
-
-        nextServer.stdout.on('data', (data) => {
-          const line = data.toString();
-          if (!serverStarted && (line.includes('Ready') || line.includes('started') || line.includes(port))) {
-            serverStarted = true;
-            clearLine();
-            console.log(`  ${fmt.success('Server running on port ' + port)}`);
-            if (!noTunnel) {
-              startTunnel({ port, email, authtoken, projectRoot: packageRoot });
-            } else {
-              printLocalOnly(port, bindHost);
-            }
-          }
-        });
-
-        nextServer.stderr.on('data', (data) => {
-          const line = data.toString().trim();
-          if (!line) return;
-          if (line.includes('[CDP]') || line.includes('[CDP Init]') || line.includes('[ProcessManager]')) {
-            if (line.includes('All') && line.includes('recovery attempts failed')) {
-              console.log(`  ${fmt.warn(line)}`);
-            }
-            return;
-          }
-          if (line && line.toLowerCase().includes('error')) {
-            console.log(`  ${fmt.dim('[next]')} ${line}`);
-          }
-        });
-
-        nextServer.on('close', (exitCode) => {
-          console.log(`\n  ${fmt.dim('Next.js server stopped.')}`);
-          process.exit(exitCode);
-        });
-
-        const cleanup = () => {
-          console.log('');
-          console.log(`  ${fmt.dim('👋 Shutting down...')}`);
-          nextServer.kill();
-          process.exit(0);
-        };
-
-        process.on('SIGINT', cleanup);
-        process.on('SIGTERM', cleanup);
-
-        setTimeout(() => {
-          if (!serverStarted) {
-            serverStarted = true;
-            clearLine();
-            console.log(`  ${fmt.success('Server likely running on port ' + port)}`);
-            if (!noTunnel) {
-              startTunnel({ port, email, authtoken, projectRoot: packageRoot });
-            } else {
-              printLocalOnly(port, bindHost);
-            }
-          }
-        }, 8000);
       }
     });
   }
