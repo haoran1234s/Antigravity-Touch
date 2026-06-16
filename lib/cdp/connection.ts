@@ -23,7 +23,7 @@ export async function discoverWorkbenches(ctx: ProxyContext) {
     logger.info(`[CDP] Initializing connection on port ${CDP_PORT}...`);
     try {
       ctx.browser = await puppeteer.connect({
-        browserURL: `http://localhost:${CDP_PORT}`,
+        browserURL: `http://127.0.0.1:${CDP_PORT}`,
         defaultViewport: null,
       });
       ctx.browser.on('disconnected', () => {
