@@ -174,6 +174,7 @@ function parseArgs() {
     else if (args[i] === '--host' && args[i + 1]) parsed.host = args[++i];
     else if (args[i] === '--authtoken' && args[i + 1]) parsed.authtoken = args[++i];
     else if (args[i] === '--no-tunnel') parsed.noTunnel = true;
+    else if (args[i] === '--rebuild') parsed.rebuild = true;
     else if (args[i] === '--help') parsed.help = true;
     else if (args[i] === '--reset') parsed.reset = true;
     else if (args[i] === '--non-interactive') parsed.nonInteractive = true;
@@ -197,6 +198,7 @@ function printHelp() {
   console.log(`    ${fmt.cyan('--authtoken')} <token>   ngrok authtoken`);
   console.log(`    ${fmt.cyan('--no-tunnel')}           Run locally without ngrok`);
   console.log(`    ${fmt.cyan('--host')} <addr>         Bind address (no-tunnel default: 0.0.0.0 for LAN/phone)`);
+  console.log(`    ${fmt.cyan('--rebuild')}             Force a fresh build before starting (ignore cached build)`);
   console.log(`    ${fmt.cyan('--reset')}               Reset saved configuration`);
   console.log(`    ${fmt.cyan('--install')}             Install as auto-start service (survives reboot)`);
   console.log(`    ${fmt.cyan('--uninstall')}           Remove the auto-start service`);
@@ -411,25 +413,109 @@ function isPrebuilt() {
   return fs.existsSync(standaloneServer);
 }
 
-function setupStandaloneAssets() {
+// True when running from a git clone (i.e. `git pull`-able source checkout),
+// as opposed to a published npm/npx package which ships only the prebuilt app.
+function isGitCheckout() {
+  return fs.existsSync(path.join(getPackageRoot(), '.git'));
+}
+
+// Walk the project's source (skipping node_modules/.next/.git) and return the
+// newest modification time found, so we can tell whether code changed since the
+// cached build was produced.
+function getNewestSourceMtimeMs() {
+  const root = getPackageRoot();
+  const SKIP_DIRS = new Set(['node_modules', '.next', '.git', '.turbo', 'dist', 'out']);
+  // Top-level entries that make up the build input. Anything not present is
+  // simply skipped, so this stays safe across project layouts.
+  const SOURCE_ENTRIES = [
+    'app', 'components', 'lib', 'hooks', 'pages', 'src', 'public', 'styles', 'bin',
+    'next.config.js', 'next.config.mjs', 'middleware.ts', 'middleware.js',
+    'tailwind.config.js', 'tailwind.config.ts', 'postcss.config.js', 'tsconfig.json',
+    'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock',
+  ];
+  let newest = 0;
+
+  const visit = (p) => {
+    let stat;
+    try {
+      stat = fs.statSync(p);
+    } catch {
+      return;
+    }
+    if (stat.isDirectory()) {
+      if (SKIP_DIRS.has(path.basename(p))) return;
+      let entries;
+      try {
+        entries = fs.readdirSync(p);
+      } catch {
+        return;
+      }
+      for (const entry of entries) visit(path.join(p, entry));
+    } else {
+      if (stat.mtimeMs > newest) newest = stat.mtimeMs;
+    }
+  };
+
+  for (const entry of SOURCE_ENTRIES) visit(path.join(root, entry));
+  return newest;
+}
+
+// True when a cached build exists but the source has been modified since it was
+// produced (e.g. after `git pull`). Only applies to git checkouts so that
+// published npx packages keep using their shipped build untouched.
+function isPrebuildStale() {
+  if (!isPrebuilt() || !isGitCheckout()) return false;
+  const serverJs = path.join(getStandaloneDir(), 'server.js');
+  let buildMtimeMs;
+  try {
+    buildMtimeMs = fs.statSync(serverJs).mtimeMs;
+  } catch {
+    return false;
+  }
+  const newestSourceMs = getNewestSourceMtimeMs();
+  // 2s tolerance so a freshly-finished build isn't flagged as stale.
+  return newestSourceMs > buildMtimeMs + 2000;
+}
+
+// Decide whether we should (re)build before starting.
+function shouldBuild({ rebuild }) {
+  if (!isPrebuilt()) return true; // nothing built yet
+  if (rebuild || process.env.ANTIGRAVITY_REBUILD === '1') return true;
+  return isPrebuildStale();
+}
+
+function setupStandaloneAssets({ refresh = false } = {}) {
   const packageRoot = getPackageRoot();
   const standaloneDir = getStandaloneDir();
 
   // The standalone output needs static files and public assets to be in the right place.
-  // Copy .next/static → .next/standalone/.next/static
+  // Copy .next/static → .next/standalone/.next/static.
+  // On a rebuild the static chunks get new content hashes, so a stale copy would
+  // make server.js request assets that 404 (blank/broken page). When `refresh`
+  // is set we drop the old copy first so the assets always match the new build.
   const srcStatic = path.join(packageRoot, '.next', 'static');
   const destStatic = path.join(standaloneDir, '.next', 'static');
 
-  if (fs.existsSync(srcStatic) && !fs.existsSync(destStatic)) {
-    copyDirSync(srcStatic, destStatic);
+  if (fs.existsSync(srcStatic)) {
+    if (refresh && fs.existsSync(destStatic)) {
+      fs.rmSync(destStatic, { recursive: true, force: true });
+    }
+    if (!fs.existsSync(destStatic)) {
+      copyDirSync(srcStatic, destStatic);
+    }
   }
 
   // Copy public/ → .next/standalone/public
   const srcPublic = path.join(packageRoot, 'public');
   const destPublic = path.join(standaloneDir, 'public');
 
-  if (fs.existsSync(srcPublic) && !fs.existsSync(destPublic)) {
-    copyDirSync(srcPublic, destPublic);
+  if (fs.existsSync(srcPublic)) {
+    if (refresh && fs.existsSync(destPublic)) {
+      fs.rmSync(destPublic, { recursive: true, force: true });
+    }
+    if (!fs.existsSync(destPublic)) {
+      copyDirSync(srcPublic, destPublic);
+    }
   }
 
   // ── Fix: Copy puppeteer-core + deps to standalone ────────────────────
@@ -510,7 +596,7 @@ function getLanIps() {
   return ips;
 }
 
-function startServer({ email, port, authtoken, noTunnel, host }) {
+function startServer({ email, port, authtoken, noTunnel, host, rebuild }) {
   const bindHost = resolveBindHost({ host, noTunnel });
   console.log('');
   printSeparator();
@@ -520,7 +606,9 @@ function startServer({ email, port, authtoken, noTunnel, host }) {
 
   const packageRoot = getPackageRoot();
 
-  if (isPrebuilt()) {
+  const needsBuild = shouldBuild({ rebuild });
+
+  if (!needsBuild) {
     // ── Pre-built standalone mode (npx / published package) ─────
     console.log(`  ${fmt.success('Using pre-built app (no build needed)')}`);
 
@@ -609,8 +697,13 @@ function startServer({ email, port, authtoken, noTunnel, host }) {
     }, 8000);
 
   } else {
-    // ── Dev mode (running from source, not published) ────────────
-    console.log(`  ${fmt.dim('No pre-built app found, building from source...')}`);
+    // ── Build-from-source mode (no cached build, or source changed) ──
+    if (isPrebuilt()) {
+      console.log(`  ${fmt.warn('Source code changed since the last build — rebuilding...')}`);
+      console.log(`  ${fmt.dim('(skip with a fresh build cache; force anytime with --rebuild)')}`);
+    } else {
+      console.log(`  ${fmt.dim('No pre-built app found, building from source...')}`);
+    }
 
     const nextEntry = path.join(packageRoot, 'node_modules', 'next', 'dist', 'bin', 'next');
 
@@ -640,7 +733,7 @@ function startServer({ email, port, authtoken, noTunnel, host }) {
 
       // Start using standalone if it was just built
       if (isPrebuilt()) {
-        setupStandaloneAssets();
+        setupStandaloneAssets({ refresh: true });
         const standaloneDir = getStandaloneDir();
         const serverJs = path.join(standaloneDir, 'server.js');
 
@@ -1601,6 +1694,7 @@ async function main() {
       authtoken: null,
       noTunnel: true,
       host: args.host,
+      rebuild: args.rebuild,
     });
     return;
   }
@@ -1621,6 +1715,7 @@ async function main() {
       authtoken,
       noTunnel: false,
       host: args.host,
+      rebuild: args.rebuild,
     });
     return;
   }
@@ -1633,6 +1728,7 @@ async function main() {
       authtoken: settings.authtoken,
       noTunnel: false,
       host: args.host,
+      rebuild: args.rebuild,
     });
   } catch (err) {
     if (err.message === 'readline was closed') {
