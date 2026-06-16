@@ -539,6 +539,8 @@ function startServer({ email, port, authtoken, noTunnel, host }) {
       env: { ...process.env, PORT: port, HOSTNAME: bindHost },
     });
 
+    // Removed stdout/stderr pipe to prevent Windows QuickEdit deadlock
+
     let serverStarted = false;
 
     nextServer.stdout.on('data', (data) => {
@@ -650,6 +652,8 @@ function startServer({ email, port, authtoken, noTunnel, host }) {
           env: { ...process.env, PORT: port, HOSTNAME: bindHost },
         });
 
+        // Removed stdout/stderr pipe to prevent Windows QuickEdit deadlock
+
         let serverStarted = false;
 
         nextServer.stdout.on('data', (data) => {
@@ -717,6 +721,8 @@ function startServer({ email, port, authtoken, noTunnel, host }) {
           cwd: packageRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
+
+        // Removed stdout/stderr pipe to prevent Windows QuickEdit deadlock
 
         let serverStarted = false;
 
