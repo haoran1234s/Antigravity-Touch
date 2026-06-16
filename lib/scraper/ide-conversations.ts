@@ -47,7 +47,11 @@ export async function getActiveIdeConversation(
       };
 
       const routeId = location.href.match(uuidRe)?.[1] || null;
-      const sidebar = document.querySelector('[role="navigation"][aria-label="Sidebar"]');
+      const sidebar =
+        document.querySelector('[role="navigation"][aria-label="Sidebar"]') ||
+        document.querySelector('[role="navigation"]') ||
+        document.querySelector('aside') ||
+        document.querySelector('[class*="sidebar" i]');
 
       const isConversationButton = (el: Element) => {
         const cls = el.getAttribute('class') || '';
@@ -184,13 +188,31 @@ export async function getIdeConversations(
 
       const routeId = location.href.match(uuidRe)?.[1] || null;
 
+      // Conversation routes look like `/c/<uuid>`. When a row is rendered as (or
+      // contains) an anchor we can read its id straight from the href, which is
+      // far more stable than any Tailwind class name.
+      const idFromEl = (el: Element): string | null => {
+        const anchor = (el.matches && el.matches('a[href]'))
+          ? el
+          : el.querySelector?.('a[href]');
+        const href = anchor?.getAttribute('href') || '';
+        return href.match(uuidRe)?.[1] || null;
+      };
+
       // ── Antigravity 2.x full-page sidebar ───────────────────────────────
-      const sidebar = document.querySelector('[role="navigation"][aria-label="Sidebar"]');
+      const sidebar =
+        document.querySelector('[role="navigation"][aria-label="Sidebar"]') ||
+        document.querySelector('[role="navigation"]') ||
+        document.querySelector('aside') ||
+        document.querySelector('[class*="sidebar" i]');
       if (sidebar) {
         if (scrapeOptions.expandSeeAllRows) await expandSeeAllRows(sidebar);
 
-        const sections = Array.from(sidebar.querySelectorAll('div'))
+        let sections: Element[] = Array.from(sidebar.querySelectorAll('div'))
           .filter((el) => (el.getAttribute('class') || '').includes('group/section'));
+        // Fallback: if the project-section wrapper class changed, treat the whole
+        // sidebar as a single (ungrouped) section so rows are still collected.
+        if (sections.length === 0) sections = [sidebar];
 
         const rows: Array<{
           title: string;
@@ -217,11 +239,12 @@ export async function getIdeConversations(
               cls.includes('bg-sidebar-secondary') ||
               (!!document.title && title === document.title);
 
+            const id = idFromEl(button) || (active ? routeId : null);
             rows.push({
               title,
               active,
               index: index++,
-              id: active ? routeId : null,
+              id,
               projectName,
               mtimeText,
               url: active ? location.href : undefined,
@@ -250,7 +273,16 @@ export async function getIdeConversations(
 
       // ── Legacy side-panel history dropdown ──────────────────────────────
       const historyBtn = document.querySelector('a[data-past-conversations-toggle="true"]');
-      if (!historyBtn) return { error: 'History button not found' };
+      if (!historyBtn) {
+        // If we found a 2.x sidebar but matched no conversation rows, the row
+        // selectors are out of date for this Antigravity build. Degrade quietly
+        // to local history (don't throw a scary "sync failed" error) and report
+        // an empty sidebar so callers can surface a precise diagnostic instead.
+        if (sidebar) {
+          return { rows: [], activeTitle: document.title || null, source: 'sidebar-empty' };
+        }
+        return { error: 'History button not found' };
+      }
 
       const headerRow = historyBtn.parentElement?.parentElement;
       const activeTitleEl = headerRow?.querySelector('div.flex.min-w-0');
