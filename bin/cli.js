@@ -171,6 +171,7 @@ function parseArgs() {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--email' && args[i + 1]) parsed.email = args[++i];
     else if (args[i] === '--port' && args[i + 1]) parsed.port = args[++i];
+    else if (args[i] === '--host' && args[i + 1]) parsed.host = args[++i];
     else if (args[i] === '--authtoken' && args[i + 1]) parsed.authtoken = args[++i];
     else if (args[i] === '--no-tunnel') parsed.noTunnel = true;
     else if (args[i] === '--help') parsed.help = true;
@@ -195,6 +196,7 @@ function printHelp() {
   console.log(`    ${fmt.cyan('--port')} <number>       Local port (default: 5555)`);
   console.log(`    ${fmt.cyan('--authtoken')} <token>   ngrok authtoken`);
   console.log(`    ${fmt.cyan('--no-tunnel')}           Run locally without ngrok`);
+  console.log(`    ${fmt.cyan('--host')} <addr>         Bind address (no-tunnel default: 0.0.0.0 for LAN/phone)`);
   console.log(`    ${fmt.cyan('--reset')}               Reset saved configuration`);
   console.log(`    ${fmt.cyan('--install')}             Install as auto-start service (survives reboot)`);
   console.log(`    ${fmt.cyan('--uninstall')}           Remove the auto-start service`);
@@ -484,7 +486,32 @@ function copyDirSync(src, dest) {
 }
 
 // ── Server Startup ──────────────────────────────────────────────────────
-function startServer({ email, port, authtoken, noTunnel }) {
+/**
+ * Determine which network interface the server should bind to.
+ *
+ * In no-tunnel (LAN) mode we must bind 0.0.0.0 so phones/other devices on the
+ * same Wi-Fi can reach the server. Binding 127.0.0.1 (loopback) makes the app
+ * reachable only from the host PC, which is why the mobile project list came up
+ * empty. In tunnel mode 127.0.0.1 is enough because ngrok runs on the same host.
+ */
+function resolveBindHost({ host, noTunnel }) {
+  if (host && host.trim()) return host.trim();
+  return noTunnel ? '0.0.0.0' : '127.0.0.1';
+}
+
+function getLanIps() {
+  const nets = os.networkInterfaces();
+  const ips = [];
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === 'IPv4' && !net.internal) ips.push(net.address);
+    }
+  }
+  return ips;
+}
+
+function startServer({ email, port, authtoken, noTunnel, host }) {
+  const bindHost = resolveBindHost({ host, noTunnel });
   console.log('');
   printSeparator();
   console.log('');
@@ -509,7 +536,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
     const nextServer = spawn(process.execPath, [serverJs], {
       cwd: standaloneDir,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PORT: port, HOSTNAME: '127.0.0.1' },
+      env: { ...process.env, PORT: port, HOSTNAME: bindHost },
     });
 
     let serverStarted = false;
@@ -524,7 +551,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
         if (!noTunnel) {
           startTunnel({ port, email, authtoken, projectRoot: packageRoot });
         } else {
-          printLocalOnly(port);
+          printLocalOnly(port, bindHost);
         }
       }
     });
@@ -574,7 +601,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
         if (!noTunnel) {
           startTunnel({ port, email, authtoken, projectRoot: packageRoot });
         } else {
-          printLocalOnly(port);
+          printLocalOnly(port, bindHost);
         }
       }
     }, 8000);
@@ -620,7 +647,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
         const nextServer = spawn(process.execPath, [serverJs], {
           cwd: standaloneDir,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, PORT: port, HOSTNAME: '127.0.0.1' },
+          env: { ...process.env, PORT: port, HOSTNAME: bindHost },
         });
 
         let serverStarted = false;
@@ -635,7 +662,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
             if (!noTunnel) {
               startTunnel({ port, email, authtoken, projectRoot: packageRoot });
             } else {
-              printLocalOnly(port);
+              printLocalOnly(port, bindHost);
             }
           }
         });
@@ -677,7 +704,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
             if (!noTunnel) {
               startTunnel({ port, email, authtoken, projectRoot: packageRoot });
             } else {
-              printLocalOnly(port);
+              printLocalOnly(port, bindHost);
             }
           }
         }, 8000);
@@ -686,7 +713,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
         // Fallback: use next start
         process.stdout.write(`  ${fmt.dim('▸ Starting server on port ' + port + '...')}`);
 
-        const nextServer = spawn(process.execPath, [nextEntry, 'start', '-p', port], {
+        const nextServer = spawn(process.execPath, [nextEntry, 'start', '-p', port, '-H', bindHost], {
           cwd: packageRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
@@ -702,7 +729,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
             if (!noTunnel) {
               startTunnel({ port, email, authtoken, projectRoot: packageRoot });
             } else {
-              printLocalOnly(port);
+              printLocalOnly(port, bindHost);
             }
           }
         });
@@ -744,7 +771,7 @@ function startServer({ email, port, authtoken, noTunnel }) {
             if (!noTunnel) {
               startTunnel({ port, email, authtoken, projectRoot: packageRoot });
             } else {
-              printLocalOnly(port);
+              printLocalOnly(port, bindHost);
             }
           }
         }, 8000);
@@ -1056,7 +1083,8 @@ function startTunnel({ port, email, authtoken, projectRoot }) {
   return mgr; // returned so cleanup can call mgr.stop()
 }
 
-function printLocalOnly(port) {
+function printLocalOnly(port, host) {
+  const lanReachable = host === '0.0.0.0' || host === '::';
   console.log('');
   console.log(`  ${c.bold}${c.cyan}╔═══════════════════════════════════════════════════════╗${c.reset}`);
   console.log(`  ${c.bold}${c.cyan}║${c.reset}                                                       ${c.bold}${c.cyan}║${c.reset}`);
@@ -1065,6 +1093,24 @@ function printLocalOnly(port) {
   console.log(`  ${c.bold}${c.cyan}║${c.reset}                                                       ${c.bold}${c.cyan}║${c.reset}`);
   console.log(`  ${c.bold}${c.cyan}╚═══════════════════════════════════════════════════════╝${c.reset}`);
   console.log('');
+
+  if (lanReachable) {
+    const ips = getLanIps();
+    if (ips.length > 0) {
+      console.log(`  ${fmt.bold('📱 On your phone (same Wi-Fi):')}`);
+      for (const ip of ips) {
+        console.log(`     ${fmt.link(`http://${ip}:${port}`)}`);
+      }
+      console.log('');
+    } else {
+      console.log(`  ${fmt.dim('Tip: open http://<this-PC-LAN-IP>:' + port + ' on your phone (same Wi-Fi).')}`);
+      console.log('');
+    }
+  } else {
+    console.log(`  ${fmt.dim('Bound to ' + host + ' (loopback only). For phone access, use --host 0.0.0.0.')}`);
+    console.log('');
+  }
+
   console.log(`  ${fmt.dim('Press Ctrl+C to stop.')}`);
   console.log('');
 }
@@ -1548,6 +1594,7 @@ async function main() {
       port: args.port || '5555',
       authtoken: null,
       noTunnel: true,
+      host: args.host,
     });
     return;
   }
@@ -1567,6 +1614,7 @@ async function main() {
       port,
       authtoken,
       noTunnel: false,
+      host: args.host,
     });
     return;
   }
@@ -1578,6 +1626,7 @@ async function main() {
       port: settings.port,
       authtoken: settings.authtoken,
       noTunnel: false,
+      host: args.host,
     });
   } catch (err) {
     if (err.message === 'readline was closed') {
