@@ -25,6 +25,12 @@ export async function discoverWorkbenches(ctx: ProxyContext) {
       ctx.browser = await puppeteer.connect({
         browserURL: `http://127.0.0.1:${CDP_PORT}`,
         defaultViewport: null,
+        // Bound every CDP call (e.g. Runtime.callFunctionOn used by page.evaluate).
+        // The IDE renderer's main thread can be briefly blocked while an agent is
+        // actively running; the puppeteer default (180s) would hang the whole proxy
+        // on a single scrape and stall every HTTP route. A short timeout makes scrapes
+        // fail fast so the monitor loop keeps serving last-known state and self-heals.
+        protocolTimeout: 20000,
       });
       ctx.browser.on('disconnected', () => {
         logger.info('[CDP] Browser disconnected. Resetting context...');
