@@ -62,6 +62,40 @@ function saveConfig(config) {
   } catch {}
 }
 
+// ── .env / .env.local loading ───────────────────────────────────────────
+// This CLI wrapper owns the ngrok tunnel but historically did not read the
+// project's .env files, so NGROK_AUTHTOKEN / ALLOWED_EMAIL placed there were
+// invisible to tunnel startup even though the Next.js server picks them up.
+// Load them here (a populated .env.local should be enough to start the tunnel
+// non-interactively). Real environment variables always take precedence, and
+// .env.local overrides .env.
+function loadDotEnv() {
+  const root = getPackageRoot();
+  for (const file of ['.env.local', '.env']) {
+    const p = path.join(root, file);
+    let text;
+    try {
+      if (!fs.existsSync(p)) continue;
+      text = fs.readFileSync(p, 'utf-8');
+    } catch { continue; }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // strip UTF-8 BOM
+    for (const rawLine of text.split(/\r\n|\n|\r/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+      let value = line.slice(eq + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) ||
+          (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[key] === undefined) process.env[key] = value;
+    }
+  }
+}
+
 // ── Readline helpers ────────────────────────────────────────────────────
 const rl = readline.createInterface({
   input: process.stdin,
@@ -1540,6 +1574,7 @@ async function showServiceStatus() {
 
 // ── Main ────────────────────────────────────────────────────────────────
 async function main() {
+  loadDotEnv();
   const args = parseArgs();
 
   if (args.help) {
@@ -1587,20 +1622,22 @@ async function main() {
     return;
   }
 
-  if (args.nonInteractive || (args.email && (args.authtoken || process.env.NGROK_AUTHTOKEN))) {
+  const resolvedEmail = args.email || process.env.ALLOWED_EMAIL;
+  const resolvedToken = args.authtoken || process.env.NGROK_AUTHTOKEN;
+
+  if (args.nonInteractive || (resolvedEmail && resolvedToken)) {
     printBanner();
-    const authtoken = args.authtoken || process.env.NGROK_AUTHTOKEN;
     const port = args.port || '5555';
 
     console.log(`  ${fmt.dim('Port:')}     ${fmt.cyan(port)}`);
-    console.log(`  ${fmt.dim('Email:')}    ${fmt.cyan(args.email)}`);
+    console.log(`  ${fmt.dim('Email:')}    ${fmt.cyan(resolvedEmail)}`);
     console.log(`  ${fmt.dim('Tunnel:')}   ${fmt.green('ngrok + Google OAuth')}`);
     console.log('');
 
     startServer({
-      email: args.email,
+      email: resolvedEmail,
       port,
-      authtoken,
+      authtoken: resolvedToken,
       noTunnel: false,
       host: args.host,
       rebuild: args.rebuild,
