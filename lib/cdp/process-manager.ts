@@ -191,7 +191,9 @@ export async function isCdpServerActive(): Promise<{
   error?: string;
 }> {
   try {
-    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json`);
+    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json`, {
+      signal: AbortSignal.timeout(5000),
+    });
     if (!response.ok) {
       return { active: false, windowCount: 0, error: `HTTP ${response.status}` };
     }
@@ -424,7 +426,9 @@ export async function closeWindow(targetId: string): Promise<{
   message: string;
 }> {
   try {
-    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${targetId}`);
+    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${targetId}`, {
+      signal: AbortSignal.timeout(5000),
+    });
     if (response.ok) {
       return { success: true, message: 'Window closed successfully.' };
     } else {
@@ -443,7 +447,9 @@ export async function getWindowTargets(): Promise<{
   error?: string;
 }> {
   try {
-    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json`);
+    const response = await fetch(`http://127.0.0.1:${CDP_PORT}/json`, {
+      signal: AbortSignal.timeout(5000),
+    });
     if (!response.ok) {
       return { targets: [], error: `HTTP ${response.status}` };
     }
