@@ -57,3 +57,9 @@ test.txt
 # Codex local run files
 .codex-*
 
+# Local run and build logs
+*.log
+/.next-public/
+/agt-tunnel.cmd
+/agt-tunnel.ps1
+/app/api/v1/uploads/
